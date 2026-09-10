@@ -12,6 +12,16 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertFalse(NotionSceneService.isBlankScene(narration: "", onScreen: "Show the editor."))
     }
 
+    func testBaserowSceneServiceTreatsEmptyNarrationAndOnScreenAsBlank() {
+        XCTAssertTrue(BaserowSceneService.isBlankScene(narration: "", onScreen: ""))
+        XCTAssertTrue(BaserowSceneService.isBlankScene(narration: "  \n", onScreen: "\t"))
+    }
+
+    func testBaserowSceneServiceKeepsRowsWithEitherVisibleField() {
+        XCTAssertFalse(BaserowSceneService.isBlankScene(narration: "Explain this.", onScreen: ""))
+        XCTAssertFalse(BaserowSceneService.isBlankScene(narration: "", onScreen: "Show the editor."))
+    }
+
     func testOnScreenLinkExtractorFindsHTTPAndHTTPSLinksInOrder() {
         let urls = OnScreenLinkExtractor.urls(
             in: "Open https://github.com/Leonxlnx/unlazy and http://example.com/docs."

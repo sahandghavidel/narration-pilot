@@ -75,6 +75,37 @@ struct MenuBarView: View {
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 7).fill(Color.secondary.opacity(0.08)))
+                    } else if appModel.scriptModeEnabled, appModel.scriptInputFormat == .baserow {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(appModel.loadedChapterDescription ?? "Connect your Baserow scenes")
+                                .font(.subheadline.bold())
+                            TextField("Baserow base URL", text: $appModel.baserowBaseURL)
+                                .textFieldStyle(.roundedBorder)
+                            SecureField("Baserow database token", text: $appModel.baserowToken)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("Baserow table ID", text: $appModel.baserowTableID)
+                                .textFieldStyle(.roundedBorder)
+
+                            HStack(spacing: 8) {
+                                Button(appModel.isBaserowConnected ? "Reconnect" : "Connect Baserow") {
+                                    appModel.connectBaserow()
+                                }
+                                Button("Sync Now") {
+                                    appModel.syncBaserowNow()
+                                }
+                                .disabled(!appModel.hasBaserowConfiguration || appModel.isBaserowSyncing)
+                                Button("Disconnect") {
+                                    appModel.disconnectBaserow()
+                                }
+                                .disabled(!appModel.isBaserowConnected && appModel.baserowToken.isEmpty)
+                            }
+                            Text(appModel.isBaserowConnected ? "Syncs before the Scene Manager opens" : "Use a database token with read and update access")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Color.secondary.opacity(0.08)))
                     } else {
                         TextEditor(text: $appModel.typedText)
                             .font(.body)
@@ -93,7 +124,7 @@ struct MenuBarView: View {
                             appModel.readNow()
                         }
 
-                        if !(appModel.scriptModeEnabled && appModel.scriptInputFormat == .json) {
+                        if !(appModel.scriptModeEnabled && appModel.scriptInputFormat.usesStructuredScenes) {
                             Button("Clear") {
                                 appModel.clearTypedText()
                             }
@@ -121,7 +152,7 @@ struct MenuBarView: View {
                             .lineLimit(2)
                     }
 
-                    Text(appModel.currentSceneText ?? (appModel.scriptInputFormat == .json ? "Import a chapter JSON to create scenes." : "Paste a script to create scenes."))
+                    Text(appModel.currentSceneText ?? (appModel.scriptInputFormat.usesStructuredScenes ? "Connect or sync a scene source to load scenes." : "Paste a script to create scenes."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(3)

@@ -31,7 +31,7 @@ final class SceneEditorController: NSObject, NSWindowDelegate {
         }
 
         let panel: NSPanel
-        if let chapter = appModel.loadedChapter, appModel.scriptInputFormat == .json {
+        if let chapter = appModel.loadedChapter, appModel.scriptInputFormat.usesStructuredScenes {
             let selectedIndex = min(appModel.currentSceneIndexForEditor, max(chapter.scenes.count - 1, 0))
             panel = makeJSONPanel(appModel: appModel, chapter: chapter, selectedIndex: selectedIndex)
         } else {

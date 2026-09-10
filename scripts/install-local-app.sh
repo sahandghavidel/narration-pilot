@@ -58,6 +58,21 @@ cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
   <string>APPL</string>
   <key>LSUIElement</key>
   <true/>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>host.docker.internal</key>
+      <dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key>
+        <true/>
+        <key>NSIncludesSubdomains</key>
+        <true/>
+      </dict>
+    </dict>
+  </dict>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>

@@ -19,7 +19,7 @@ final class AppModel: ObservableObject {
     @Published var scriptInputFormat: ScriptInputFormat {
         didSet {
             defaults.set(scriptInputFormat.rawValue, forKey: Self.scriptInputFormatKey)
-            if scriptInputFormat == .json {
+            if scriptInputFormat.usesStructuredScenes {
                 readsTypedTextInsteadOfClipboard = true
                 scriptModeEnabled = true
             }
@@ -34,6 +34,11 @@ final class AppModel: ObservableObject {
     @Published var notionDataSourceID: String
     @Published private(set) var isNotionConnected = false
     @Published private(set) var isNotionSyncing = false
+    @Published var baserowBaseURL: String
+    @Published var baserowToken: String
+    @Published var baserowTableID: String
+    @Published private(set) var isBaserowConnected = false
+    @Published private(set) var isBaserowSyncing = false
 
     @Published var recordingCueSoundsEnabled: Bool {
         didSet { defaults.set(recordingCueSoundsEnabled, forKey: Self.recordingCueSoundsEnabledKey) }
@@ -537,7 +542,7 @@ final class AppModel: ObservableObject {
     }
 
     var currentNarrationScene: NarrationScene? {
-        guard scriptInputFormat == .json,
+        guard scriptInputFormat.usesStructuredScenes,
               let loadedChapter,
               loadedChapter.scenes.indices.contains(currentSceneIndex) else {
             return nil
@@ -579,7 +584,7 @@ final class AppModel: ObservableObject {
     }
 
     var previousSceneDisplayText: String? {
-        guard scriptInputFormat == .json else { return previousSceneText }
+        guard scriptInputFormat.usesStructuredScenes else { return previousSceneText }
         let previousIndex = currentSceneIndex - 1
         guard let loadedChapter, loadedChapter.scenes.indices.contains(previousIndex) else { return nil }
         return "Scene \(loadedChapter.scenes[previousIndex].sceneNumber)"
@@ -595,7 +600,7 @@ final class AppModel: ObservableObject {
     }
 
     var nextSceneDisplayText: String? {
-        guard scriptInputFormat == .json else { return nextSceneText }
+        guard scriptInputFormat.usesStructuredScenes else { return nextSceneText }
         let nextIndex = currentSceneIndex + 1
         guard let loadedChapter, loadedChapter.scenes.indices.contains(nextIndex) else { return nil }
         return "Scene \(loadedChapter.scenes[nextIndex].sceneNumber)"
@@ -608,6 +613,18 @@ final class AppModel: ObservableObject {
 
     var hasNotionConfiguration: Bool {
         !notionToken.isEmpty && !notionDataSourceID.isEmpty
+    }
+
+    var hasBaserowConfiguration: Bool {
+        !baserowBaseURL.isEmpty && !baserowToken.isEmpty && !baserowTableID.isEmpty
+    }
+
+    var hasConnectedSceneSource: Bool {
+        switch scriptInputFormat {
+        case .text: false
+        case .json: isNotionConnected
+        case .baserow: isBaserowConnected
+        }
     }
 
     var scriptSceneProgress: String {
@@ -643,6 +660,8 @@ final class AppModel: ObservableObject {
     private static let scriptInputFormatKey = "clipboardReader.scriptInputFormat"
     private static let lastChapterJSONPathKey = "clipboardReader.lastChapterJSONPath"
     private static let notionDataSourceIDKey = "clipboardReader.notion.dataSourceID"
+    private static let baserowBaseURLKey = "clipboardReader.baserow.baseURL"
+    private static let baserowTableIDKey = "clipboardReader.baserow.tableID"
     private static let legacyRecordingShortcutTriggerKey = "clipboardReader.recordingShortcutTrigger.enabled"
     private static let recordingShortcutValueKey = "clipboardReader.recordingShortcutTrigger.shortcut"
     private static let accessibilityLaunchPromptAttemptedKey = "clipboardReader.accessibility.launchPromptAttempted"
@@ -754,6 +773,7 @@ final class AppModel: ObservableObject {
     private let userActivityIdleService = UserActivityIdleService()
     private let chapterFileWatcher = ChapterFileWatcher()
     private let notionSceneService = NotionSceneService()
+    private let baserowSceneService = BaserowSceneService()
     private let ttsManager = TTSManager()
     private var cancellables = Set<AnyCancellable>()
     private var presenterOverlayController: PresenterOverlayController?
@@ -773,10 +793,21 @@ final class AppModel: ObservableObject {
     private var notionPageIDsBySceneID: [String: String] = [:]
     private var notionLastEditedBySceneID: [String: Date] = [:]
     private var notionRevision = ""
+    private var baserowRowIDsBySceneID: [String: Int] = [:]
+    private var baserowLastEditedBySceneID: [String: Date] = [:]
+    private var baserowRevision = ""
 
     /// Notion "last edited" timestamp for a scene ID, when the chapter came from Notion.
     func notionLastEdited(forSceneID sceneID: String) -> Date? {
         notionLastEditedBySceneID[sceneID]
+    }
+
+    func sceneLastEdited(forSceneID sceneID: String) -> Date? {
+        switch scriptInputFormat {
+        case .text: nil
+        case .json: notionLastEditedBySceneID[sceneID]
+        case .baserow: baserowLastEditedBySceneID[sceneID]
+        }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -796,6 +827,9 @@ final class AppModel: ObservableObject {
         self.loadedChapterURL = nil
         self.notionToken = NotionTokenStore.load()
         self.notionDataSourceID = defaults.string(forKey: Self.notionDataSourceIDKey) ?? "81db58ed-5ad8-45b5-bac5-893d68d697eb"
+        self.baserowBaseURL = defaults.string(forKey: Self.baserowBaseURLKey) ?? "http://host.docker.internal:85"
+        self.baserowToken = BaserowTokenStore.load()
+        self.baserowTableID = defaults.string(forKey: Self.baserowTableIDKey) ?? "739"
         self.recordingCueSoundsEnabled = defaults.bool(forKey: Self.recordingCueSoundsEnabledKey)
         self.recordingStartCueSound = RecordingCueSound(
             rawValue: defaults.string(forKey: Self.recordingStartCueSoundKey) ?? RecordingCueSound.pop.rawValue
@@ -1162,6 +1196,126 @@ final class AppModel: ObservableObject {
         return base.appendingPathComponent("Narration Pilot", isDirectory: true).appendingPathComponent("notion-scenes-cache.json")
     }
 
+    func restoreBaserowIfAvailable() {
+        guard hasBaserowConfiguration else {
+            restoreBaserowCache()
+            return
+        }
+        connectBaserow()
+    }
+
+    func connectBaserow() {
+        let baseURL = baserowBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = baserowToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tableID = baserowTableID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !baseURL.isEmpty, !token.isEmpty, !tableID.isEmpty else {
+            statusMessage = "Enter a Baserow URL, database token, and table ID."
+            return
+        }
+        baserowBaseURL = baseURL
+        baserowToken = token
+        baserowTableID = tableID
+        BaserowTokenStore.save(token)
+        defaults.set(baseURL, forKey: Self.baserowBaseURLKey)
+        defaults.set(tableID, forKey: Self.baserowTableIDKey)
+        Task { await syncBaserowScenes(force: true) }
+    }
+
+    func syncBaserowNow() {
+        Task { await syncBaserowScenes(force: true) }
+    }
+
+    func disconnectBaserow() {
+        isBaserowConnected = false
+        baserowRowIDsBySceneID = [:]
+        baserowLastEditedBySceneID = [:]
+        baserowRevision = ""
+        BaserowTokenStore.save("")
+        baserowToken = ""
+        statusMessage = "Baserow disconnected."
+    }
+
+    private func syncBaserowScenes(force: Bool) async {
+        guard hasBaserowConfiguration, !isBaserowSyncing else { return }
+        isBaserowSyncing = true
+        defer { isBaserowSyncing = false }
+        do {
+            let records = try await baserowSceneService.fetchScenes(
+                baseURL: baserowBaseURL,
+                token: baserowToken,
+                tableID: baserowTableID
+            )
+            if records.isEmpty {
+                loadedChapter = nil
+                loadedChapterURL = nil
+                baserowRowIDsBySceneID = [:]
+                baserowLastEditedBySceneID = [:]
+                baserowRevision = ""
+                isBaserowConnected = true
+                scriptInputFormat = .baserow
+                scriptModeEnabled = true
+                readsTypedTextInsteadOfClipboard = true
+                refreshScriptScenes()
+                statusMessage = "Baserow connected. No scenes yet."
+                presenterOverlayController?.updateLayout()
+                return
+            }
+            let revision = records.map { "\($0.rowID):\($0.lastEditedTime)" }.joined(separator: "|")
+            if !force, revision == baserowRevision { return }
+            let chapter = NarrationChapter(
+                schemaVersion: NarrationChapterLoader.supportedSchemaVersion,
+                chapterNumber: 1,
+                chapterTitle: "Baserow Scenes",
+                scenes: records.map(\.scene)
+            )
+            try NarrationChapterLoader.validate(chapter)
+            let previousSceneID = currentNarrationScene?.id
+            loadedChapter = chapter
+            loadedChapterURL = nil
+            baserowRowIDsBySceneID = Dictionary(uniqueKeysWithValues: records.map { ($0.scene.id, $0.rowID) })
+            baserowLastEditedBySceneID = Dictionary(uniqueKeysWithValues: records.compactMap { record in
+                guard let date = BaserowSceneService.date(from: record.lastEditedTime) else { return nil }
+                return (record.scene.id, date)
+            })
+            baserowRevision = revision
+            isBaserowConnected = true
+            scriptInputFormat = .baserow
+            scriptModeEnabled = true
+            readsTypedTextInsteadOfClipboard = true
+            refreshScriptScenes()
+            if let previousSceneID, let index = chapter.scenes.firstIndex(where: { $0.id == previousSceneID }) {
+                currentSceneIndex = index
+            }
+            saveBaserowCache(chapter)
+            statusMessage = "Baserow synced. \(scriptSceneProgress)"
+            presenterOverlayController?.updateLayout()
+        } catch {
+            if !isBaserowConnected { restoreBaserowCache() }
+            statusMessage = "Baserow sync failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
+    }
+
+    private func saveBaserowCache(_ chapter: NarrationChapter) {
+        guard let data = try? JSONEncoder.narrationPilot.encode(chapter) else { return }
+        try? FileManager.default.createDirectory(at: baserowCacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: baserowCacheURL, options: .atomic)
+    }
+
+    private func restoreBaserowCache() {
+        guard let chapter = try? NarrationChapterLoader.load(from: baserowCacheURL) else { return }
+        loadedChapter = chapter
+        loadedChapterURL = nil
+        scriptInputFormat = .baserow
+        scriptModeEnabled = true
+        refreshScriptScenes()
+        statusMessage = "Using cached Baserow scenes offline."
+    }
+
+    private var baserowCacheURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return base.appendingPathComponent("Narration Pilot", isDirectory: true).appendingPathComponent("baserow-scenes-cache.json")
+    }
+
     func chooseChapterJSON() {
         let panel = NSOpenPanel()
         panel.title = "Import Chapter JSON"
@@ -1294,7 +1448,11 @@ final class AppModel: ObservableObject {
     }
 
     func saveEditedChapterJSON(_ text: String) {
-        if isNotionConnected {
+        if scriptInputFormat == .baserow, isBaserowConnected {
+            saveEditedBaserowChapter(text)
+            return
+        }
+        if scriptInputFormat == .json, isNotionConnected {
             saveEditedNotionChapter(text)
             return
         }
@@ -1353,6 +1511,42 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func saveEditedBaserowChapter(_ text: String) {
+        do {
+            let chapter = try NarrationChapterLoader.decode(Data(text.utf8))
+            guard let oldChapter = loadedChapter,
+                  let changed = chapter.scenes.first(where: { scene in
+                      oldChapter.scenes.first(where: { $0.id == scene.id }) != scene
+                  }),
+                  let rowID = baserowRowIDsBySceneID[changed.id] else {
+                statusMessage = "No Baserow scene change found."
+                return
+            }
+            loadedChapter = chapter
+            refreshScriptScenes()
+            saveBaserowCache(chapter)
+            statusMessage = "Saving Scene \(changed.sceneNumber) to Baserow…"
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.baserowSceneService.updateScene(
+                        changed,
+                        rowID: rowID,
+                        baseURL: self.baserowBaseURL,
+                        token: self.baserowToken,
+                        tableID: self.baserowTableID
+                    )
+                    self.baserowRevision = ""
+                    self.statusMessage = "Scene \(changed.sceneNumber) saved to Baserow."
+                } catch {
+                    self.statusMessage = "Baserow save failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                }
+            }
+        } catch {
+            statusMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
     private func applyPendingChapterReloadIfNeeded() {
         guard let url = pendingChapterReloadURL else { return }
         pendingChapterReloadURL = nil
@@ -1364,7 +1558,14 @@ final class AppModel: ObservableObject {
             scriptModeEnabled = true
         }
 
-        if hasNotionConfiguration {
+        if scriptInputFormat == .baserow, hasBaserowConfiguration {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.syncBaserowScenes(force: true)
+                self.refreshScriptScenes()
+                self.sceneEditorController?.show()
+            }
+        } else if scriptInputFormat == .json, hasNotionConfiguration {
             Task { [weak self] in
                 guard let self else { return }
                 await self.syncNotionScenes(force: true)
@@ -1384,7 +1585,14 @@ final class AppModel: ObservableObject {
 
         if sceneEditorController?.isVisible == true {
             sceneEditorController?.toggle()
-        } else if hasNotionConfiguration {
+        } else if scriptInputFormat == .baserow, hasBaserowConfiguration {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.syncBaserowScenes(force: true)
+                self.refreshScriptScenes()
+                self.sceneEditorController?.show()
+            }
+        } else if scriptInputFormat == .json, hasNotionConfiguration {
             Task { [weak self] in
                 guard let self else { return }
                 await self.syncNotionScenes(force: true)
@@ -1474,7 +1682,7 @@ final class AppModel: ObservableObject {
     }
 
     func refreshScriptScenes() {
-        if scriptInputFormat == .json {
+        if scriptInputFormat.usesStructuredScenes {
             manualSceneOverride = nil
             manualSceneOverrideSource = nil
             scriptScenes = loadedChapter?.scenes.map { scene in
@@ -1655,7 +1863,7 @@ final class AppModel: ObservableObject {
     }
 
     func replayCurrentOnScreenOnly() {
-        guard scriptModeEnabled, scriptInputFormat == .json,
+        guard scriptModeEnabled, scriptInputFormat.usesStructuredScenes,
               let scene = currentNarrationScene else {
             statusMessage = "Load a Chapter JSON scene first."
             return

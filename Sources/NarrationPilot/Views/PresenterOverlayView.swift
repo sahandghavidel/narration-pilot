@@ -20,7 +20,7 @@ struct PresenterOverlayView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "pencil")
-                            Text(appModel.scriptInputFormat == .json ? "View Scene" : "Edit Scene")
+                            Text(appModel.scriptInputFormat.usesStructuredScenes ? "View Scene" : "Edit Scene")
                         }
                     }
                     .buttonStyle(.plain)
@@ -36,7 +36,7 @@ struct PresenterOverlayView: View {
                                     .stroke(appModel.presenterOverlayCurrentTextColor.opacity(0.35))
                             )
                     )
-                    .help(appModel.scriptInputFormat == .json ? "View current JSON scene" : "Edit current scene")
+                    .help(appModel.scriptInputFormat.usesStructuredScenes ? "View current scene" : "Edit current scene")
                     .disabled(appModel.currentSceneText == nil)
                 }
 

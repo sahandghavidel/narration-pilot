@@ -1,9 +1,17 @@
 import Foundation
 
 enum ScriptInputFormat: String, CaseIterable, Identifiable {
-    case text, json
+    case text, json, baserow
     var id: String { rawValue }
-    var label: String { self == .text ? "Text Script" : "Notion Scenes" }
+    var label: String {
+        switch self {
+        case .text: "Text Script"
+        case .json: "Notion Scenes"
+        case .baserow: "Baserow Scenes"
+        }
+    }
+
+    var usesStructuredScenes: Bool { self != .text }
 }
 
 struct NarrationChapter: Codable, Equatable {

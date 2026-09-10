@@ -5,7 +5,9 @@ import Foundation
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        if AppModel.shared.hasNotionConfiguration {
+        if AppModel.shared.scriptInputFormat == .baserow, AppModel.shared.hasBaserowConfiguration {
+            AppModel.shared.restoreBaserowIfAvailable()
+        } else if AppModel.shared.scriptInputFormat == .json, AppModel.shared.hasNotionConfiguration {
             AppModel.shared.restoreNotionIfAvailable()
         } else {
             AppModel.shared.restoreLastChapterJSONIfAvailable()

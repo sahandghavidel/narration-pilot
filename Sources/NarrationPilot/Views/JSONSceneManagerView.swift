@@ -58,6 +58,20 @@ struct JSONSceneManagerView: View {
         .onReceive(NotificationCenter.default.publisher(for: .sceneEditorShouldClose)) { _ in
             if commitEdits() { close() }
         }
+        .background(
+            SceneArrowKeyMonitor { direction in
+                navigate(direction)
+            }
+        )
+    }
+
+    /// Moves scene selection by arrow key. ⌘-modified arrows work even while typing.
+    private func navigate(_ direction: SceneArrowKeyMonitor.Direction) {
+        let order = displayedSceneIndices
+        guard let position = order.firstIndex(of: selectedIndex) else { return }
+        let next = position + (direction == .up ? -1 : 1)
+        guard order.indices.contains(next) else { return }
+        select(order[next])
     }
 
     private var sceneList: some View {
@@ -66,7 +80,7 @@ struct JSONSceneManagerView: View {
                 Text("Chapter \(workingChapter.chapterNumber)")
                     .font(.headline)
                 Spacer()
-                if appModel.hasNotionConfiguration {
+                if appModel.hasConnectedSceneSource {
                     Button {
                         sortByNewestEdited.toggle()
                     } label: {
@@ -75,7 +89,7 @@ struct JSONSceneManagerView: View {
                             .font(.caption)
                     }
                     .buttonStyle(.borderless)
-                    .help(sortByNewestEdited ? "Sorted by Notion last edited (newest first). Click to restore scene order." : "Sort by Notion last edited (newest first)")
+                    .help(sortByNewestEdited ? "Sorted by last edited (newest first). Click to restore scene order." : "Sort by last edited (newest first)")
                 }
             }
 
@@ -99,7 +113,7 @@ struct JSONSceneManagerView: View {
                                     HStack(spacing: 5) {
                                         Text("Scene \(scene.sceneNumber)")
                                             .font(.caption.bold())
-                                        if sortByNewestEdited, let date = appModel.notionLastEdited(forSceneID: scene.id) {
+                                        if sortByNewestEdited, let date = appModel.sceneLastEdited(forSceneID: scene.id) {
                                             Spacer()
                                             Text(date.formatted(.relative(presentation: .named)))
                                                 .font(.caption2)
@@ -143,8 +157,8 @@ struct JSONSceneManagerView: View {
         return all.sorted { lhs, rhs in
             let lID = workingChapter.scenes[lhs].id
             let rID = workingChapter.scenes[rhs].id
-            let lDate = appModel.notionLastEdited(forSceneID: lID) ?? .distantPast
-            let rDate = appModel.notionLastEdited(forSceneID: rID) ?? .distantPast
+            let lDate = appModel.sceneLastEdited(forSceneID: lID) ?? .distantPast
+            let rDate = appModel.sceneLastEdited(forSceneID: rID) ?? .distantPast
             if lDate != rDate { return lDate > rDate }
             return workingChapter.scenes[lhs].sceneNumber < workingChapter.scenes[rhs].sceneNumber
         }
@@ -457,7 +471,101 @@ struct JSONSceneManagerView: View {
         selectedIndex = index
         loadDraft()
         activeField = nil
+        focusedField = nil
         appModel.selectSceneForEditing(index)
+        // Resign first responder so keyboard focus leaves any text view (e.g. annotation).
+        if let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0 is NSPanel }) {
+            window.makeFirstResponder(nil)
+        }
+    }
+}
+
+/// Arrow-key navigation between scenes.
+/// Plain ↑/↓ only fire when no text field has focus; ⌘↑/⌘↓ always navigate.
+private struct SceneArrowKeyMonitor: NSViewRepresentable {
+    enum Direction { case up, down }
+    let onArrow: (Direction) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onArrow: onArrow)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            context.coordinator.window = view.window
+            context.coordinator.start()
+        }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.onArrow = onArrow
+        context.coordinator.window = view.window
+        context.coordinator.start()
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.stop()
+    }
+
+        /// Only ever touched from the main thread (event monitors + view lifecycle).
+        final class Coordinator: @unchecked Sendable {
+        weak var window: NSWindow?
+        var onArrow: (Direction) -> Void
+        private var monitor: Any?
+
+        init(onArrow: @escaping (Direction) -> Void) {
+            self.onArrow = onArrow
+        }
+
+        func start() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self,
+                      let key = self.direction(for: event.keyCode),
+                      self.window?.isVisible == true else { return event }
+
+                // Only act on this panel's events (or when our window is key).
+                let isOurWindow = event.window === self.window || NSApp.keyWindow === self.window
+                guard isOurWindow else { return event }
+
+                let commandHeld = event.modifierFlags.contains(.command)
+
+                if commandHeld {
+                    // ⌘↑/⌘↓ always navigate, even while typing.
+                    DispatchQueue.main.async { self.onArrow(key) }
+                    return nil
+                }
+
+                // Plain arrows only navigate when no text input has focus.
+                if self.isTextInputFocused { return event }
+                DispatchQueue.main.async { self.onArrow(key) }
+                return nil
+            }
+        }
+
+        private func direction(for keyCode: UInt16) -> Direction? {
+            switch keyCode {
+            case 126: .up
+            case 125: .down
+            default: nil
+            }
+        }
+
+        private var isTextInputFocused: Bool {
+            guard let responder = window?.firstResponder else { return false }
+            if responder is NSTextView { return true } // TextEditor / NSTextField field editor
+            if let field = responder as? NSTextField, field.isEditable { return true }
+            return false
+        }
+
+        func stop() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+
+        deinit { stop() }
     }
 }
 
