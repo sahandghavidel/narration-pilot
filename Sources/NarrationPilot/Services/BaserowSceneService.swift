@@ -3,8 +3,23 @@ import Security
 
 struct BaserowSceneRecord: Equatable {
     let rowID: Int
+    let originalSceneNumber: Int
+    let part: String?
+    let scriptIDs: [Int]
     let lastEditedTime: String
     let scene: NarrationScene
+}
+
+struct BaserowScriptRecord: Equatable, Identifiable {
+    let rowID: Int
+    let title: String
+    let outline: String
+    let status: String?
+    let rank: Int?
+    let date: String?
+    let lastEditedTime: String
+
+    var id: Int { rowID }
 }
 
 enum BaserowSceneError: LocalizedError {
@@ -25,6 +40,34 @@ enum BaserowSceneError: LocalizedError {
 
 @MainActor
 final class BaserowSceneService {
+    func fetchScripts(baseURL: String, token: String, tableID: String) async throws -> [BaserowScriptRecord] {
+        var records: [BaserowScriptRecord] = []
+        var page = 1
+
+        while true {
+            let result = try await request(
+                baseURL: baseURL,
+                path: "/api/database/rows/table/\(clean(tableID))/",
+                method: "GET",
+                token: token,
+                queryItems: [
+                    URLQueryItem(name: "user_field_names", value: "true"),
+                    URLQueryItem(name: "size", value: "200"),
+                    URLQueryItem(name: "page", value: String(page)),
+                    URLQueryItem(name: "order_by", value: "Script Title")
+                ]
+            )
+            guard let rows = result["results"] as? [[String: Any]] else {
+                throw BaserowSceneError.invalidResponse
+            }
+            records.append(contentsOf: rows.compactMap(script(from:)))
+            guard result["next"] is String else { break }
+            page += 1
+        }
+
+        return records.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
     func fetchScenes(baseURL: String, token: String, tableID: String) async throws -> [BaserowSceneRecord] {
         var records: [BaserowSceneRecord] = []
         var page = 1
@@ -58,11 +101,14 @@ final class BaserowSceneService {
         rowID: Int,
         baseURL: String,
         token: String,
-        tableID: String
+        tableID: String,
+        part: String? = nil,
+        scriptID: Int? = nil,
+        sceneNumber: Int? = nil
     ) async throws {
         let code = scene.code
-        let fields: [String: Any] = [
-            "Scene Number": scene.sceneNumber,
+        var fields: [String: Any] = [
+            "Scene Number": sceneNumber ?? scene.sceneNumber,
             "Narration": scene.narration,
             "On Screen": scene.onScreen,
             "Annotation": scene.annotation ?? "",
@@ -71,6 +117,8 @@ final class BaserowSceneService {
             "Target File": code?.targetFile ?? "",
             "Code Instruction": code?.instruction ?? ""
         ]
+        if let part, !part.isEmpty { fields["Part"] = part }
+        if let scriptID { fields["Script"] = [scriptID] }
         _ = try await request(
             baseURL: baseURL,
             path: "/api/database/rows/table/\(clean(tableID))/\(rowID)/",
@@ -95,6 +143,9 @@ final class BaserowSceneService {
         guard let sceneNumber = integer(row["Scene Number"]), sceneNumber > 0 else {
             throw BaserowSceneError.invalidScenes("A Baserow row is missing a valid Scene Number.")
         }
+
+        let part = selectValue(row["Part"])
+        let scriptIDs = linkIDs(row["Script"])
 
         let codeText = string(row["Code"])
         let code: NarrationCode?
@@ -122,6 +173,9 @@ final class BaserowSceneService {
 
         return BaserowSceneRecord(
             rowID: rowID,
+            originalSceneNumber: sceneNumber,
+            part: part,
+            scriptIDs: scriptIDs,
             lastEditedTime: string(row["Last Edited"]),
             scene: NarrationScene(
                 id: "baserow-row-\(rowID)",
@@ -131,6 +185,21 @@ final class BaserowSceneService {
                 code: code,
                 annotation: nilIfEmpty(string(row["Annotation"]))
             )
+        )
+    }
+
+    private func script(from row: [String: Any]) -> BaserowScriptRecord? {
+        guard let rowID = integer(row["id"]) else { return nil }
+        let title = string(row["Script Title"])
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return BaserowScriptRecord(
+            rowID: rowID,
+            title: title,
+            outline: string(row["Outline"]),
+            status: selectValue(row["Status"]),
+            rank: integer(row["Rank"]),
+            date: nilIfEmpty(string(row["Date"])),
+            lastEditedTime: string(row["Last Edited"])
         )
     }
 
@@ -184,6 +253,21 @@ final class BaserowSceneService {
         if let value = value as? String { return value }
         if let value = value as? NSNumber { return value.stringValue }
         return ""
+    }
+
+    private func selectValue(_ value: Any?) -> String? {
+        if let value = value as? String { return nilIfEmpty(value) }
+        if let value = value as? [String: Any] { return nilIfEmpty(string(value["value"])) }
+        return nil
+    }
+
+    private func linkIDs(_ value: Any?) -> [Int] {
+        if let values = value as? [Int] { return values }
+        if let values = value as? [NSNumber] { return values.map(\.intValue) }
+        if let values = value as? [[String: Any]] {
+            return values.compactMap { integer($0["id"]) }
+        }
+        return []
     }
 
     private func inferredAction(from instruction: String) -> NarrationCodeAction {

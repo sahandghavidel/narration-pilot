@@ -83,8 +83,30 @@ struct MenuBarView: View {
                                 .textFieldStyle(.roundedBorder)
                             SecureField("Baserow database token", text: $appModel.baserowToken)
                                 .textFieldStyle(.roundedBorder)
-                            TextField("Baserow table ID", text: $appModel.baserowTableID)
+                            TextField("Baserow scenes table ID", text: $appModel.baserowTableID)
                                 .textFieldStyle(.roundedBorder)
+                            TextField("Baserow scripts table ID", text: $appModel.baserowScriptsTableID)
+                                .textFieldStyle(.roundedBorder)
+
+                            if !appModel.baserowScripts.isEmpty {
+                                Picker("Script", selection: Binding(
+                                    get: { appModel.baserowSelectedScriptID },
+                                    set: { appModel.selectBaserowScript($0) }
+                                )) {
+                                    ForEach(appModel.baserowScripts) { script in
+                                        Text(script.title).tag(script.rowID)
+                                    }
+                                }
+                                Picker("Part", selection: Binding(
+                                    get: { appModel.baserowPartFilter },
+                                    set: { appModel.selectBaserowPart($0) }
+                                )) {
+                                    Text("All parts").tag("")
+                                    ForEach(appModel.baserowPartOptions, id: \.self) { part in
+                                        Text(part).tag(part)
+                                    }
+                                }
+                            }
 
                             HStack(spacing: 8) {
                                 Button(appModel.isBaserowConnected ? "Reconnect" : "Connect Baserow") {
@@ -143,6 +165,12 @@ struct MenuBarView: View {
                     if let title = appModel.currentSceneTitle {
                         Text(title)
                             .font(.caption.bold())
+                    }
+
+                    if let part = appModel.currentScenePart {
+                        Text(part)
+                            .font(.caption2.bold())
+                            .foregroundStyle(.secondary)
                     }
 
                     if let onScreen = appModel.currentSceneOnScreenSummary {

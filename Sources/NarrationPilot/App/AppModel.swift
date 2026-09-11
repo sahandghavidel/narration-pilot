@@ -37,8 +37,17 @@ final class AppModel: ObservableObject {
     @Published var baserowBaseURL: String
     @Published var baserowToken: String
     @Published var baserowTableID: String
+    @Published var baserowScriptsTableID: String
+    @Published var baserowSelectedScriptID: Int {
+        didSet { defaults.set(baserowSelectedScriptID, forKey: Self.baserowSelectedScriptIDKey) }
+    }
+    @Published var baserowPartFilter: String {
+        didSet { defaults.set(baserowPartFilter, forKey: Self.baserowPartFilterKey) }
+    }
     @Published private(set) var isBaserowConnected = false
     @Published private(set) var isBaserowSyncing = false
+    @Published private(set) var baserowScripts: [BaserowScriptRecord] = []
+    @Published private(set) var baserowPartOptions: [String] = []
 
     @Published var recordingCueSoundsEnabled: Bool {
         didSet { defaults.set(recordingCueSoundsEnabled, forKey: Self.recordingCueSoundsEnabledKey) }
@@ -607,6 +616,11 @@ final class AppModel: ObservableObject {
     }
 
     var loadedChapterDescription: String? {
+        if scriptInputFormat == .baserow {
+            let title = baserowScripts.first(where: { $0.rowID == baserowSelectedScriptID })?.title
+                ?? "Baserow Scenes"
+            return baserowPartFilter.isEmpty ? title : "\(title) · \(baserowPartFilter)"
+        }
         guard let loadedChapter else { return nil }
         return "Chapter \(loadedChapter.chapterNumber): \(loadedChapter.chapterTitle)"
     }
@@ -616,7 +630,12 @@ final class AppModel: ObservableObject {
     }
 
     var hasBaserowConfiguration: Bool {
-        !baserowBaseURL.isEmpty && !baserowToken.isEmpty && !baserowTableID.isEmpty
+        !baserowBaseURL.isEmpty && !baserowToken.isEmpty && !baserowTableID.isEmpty && !baserowScriptsTableID.isEmpty
+    }
+
+    var currentScenePart: String? {
+        guard scriptInputFormat == .baserow, let scene = currentNarrationScene else { return nil }
+        return baserowPartBySceneID[scene.id]
     }
 
     var hasConnectedSceneSource: Bool {
@@ -662,6 +681,9 @@ final class AppModel: ObservableObject {
     private static let notionDataSourceIDKey = "clipboardReader.notion.dataSourceID"
     private static let baserowBaseURLKey = "clipboardReader.baserow.baseURL"
     private static let baserowTableIDKey = "clipboardReader.baserow.tableID"
+    private static let baserowScriptsTableIDKey = "clipboardReader.baserow.scriptsTableID"
+    private static let baserowSelectedScriptIDKey = "clipboardReader.baserow.selectedScriptID"
+    private static let baserowPartFilterKey = "clipboardReader.baserow.partFilter"
     private static let legacyRecordingShortcutTriggerKey = "clipboardReader.recordingShortcutTrigger.enabled"
     private static let recordingShortcutValueKey = "clipboardReader.recordingShortcutTrigger.shortcut"
     private static let accessibilityLaunchPromptAttemptedKey = "clipboardReader.accessibility.launchPromptAttempted"
@@ -794,6 +816,9 @@ final class AppModel: ObservableObject {
     private var notionLastEditedBySceneID: [String: Date] = [:]
     private var notionRevision = ""
     private var baserowRowIDsBySceneID: [String: Int] = [:]
+    private var baserowOriginalSceneNumbersBySceneID: [String: Int] = [:]
+    private var baserowPartBySceneID: [String: String] = [:]
+    private var baserowScriptIDsBySceneID: [String: Int] = [:]
     private var baserowLastEditedBySceneID: [String: Date] = [:]
     private var baserowRevision = ""
 
@@ -830,6 +855,9 @@ final class AppModel: ObservableObject {
         self.baserowBaseURL = defaults.string(forKey: Self.baserowBaseURLKey) ?? "http://host.docker.internal:85"
         self.baserowToken = BaserowTokenStore.load()
         self.baserowTableID = defaults.string(forKey: Self.baserowTableIDKey) ?? "739"
+        self.baserowScriptsTableID = defaults.string(forKey: Self.baserowScriptsTableIDKey) ?? "740"
+        self.baserowSelectedScriptID = defaults.integer(forKey: Self.baserowSelectedScriptIDKey)
+        self.baserowPartFilter = defaults.string(forKey: Self.baserowPartFilterKey) ?? ""
         self.recordingCueSoundsEnabled = defaults.bool(forKey: Self.recordingCueSoundsEnabledKey)
         self.recordingStartCueSound = RecordingCueSound(
             rawValue: defaults.string(forKey: Self.recordingStartCueSoundKey) ?? RecordingCueSound.pop.rawValue
@@ -1208,16 +1236,19 @@ final class AppModel: ObservableObject {
         let baseURL = baserowBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let token = baserowToken.trimmingCharacters(in: .whitespacesAndNewlines)
         let tableID = baserowTableID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !baseURL.isEmpty, !token.isEmpty, !tableID.isEmpty else {
-            statusMessage = "Enter a Baserow URL, database token, and table ID."
+        let scriptsTableID = baserowScriptsTableID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !baseURL.isEmpty, !token.isEmpty, !tableID.isEmpty, !scriptsTableID.isEmpty else {
+            statusMessage = "Enter a Baserow URL, token, scenes table ID, and scripts table ID."
             return
         }
         baserowBaseURL = baseURL
         baserowToken = token
         baserowTableID = tableID
+        baserowScriptsTableID = scriptsTableID
         BaserowTokenStore.save(token)
         defaults.set(baseURL, forKey: Self.baserowBaseURLKey)
         defaults.set(tableID, forKey: Self.baserowTableIDKey)
+        defaults.set(scriptsTableID, forKey: Self.baserowScriptsTableIDKey)
         Task { await syncBaserowScenes(force: true) }
     }
 
@@ -1227,7 +1258,12 @@ final class AppModel: ObservableObject {
 
     func disconnectBaserow() {
         isBaserowConnected = false
+        baserowScripts = []
+        baserowPartOptions = []
         baserowRowIDsBySceneID = [:]
+        baserowOriginalSceneNumbersBySceneID = [:]
+        baserowPartBySceneID = [:]
+        baserowScriptIDsBySceneID = [:]
         baserowLastEditedBySceneID = [:]
         baserowRevision = ""
         BaserowTokenStore.save("")
@@ -1235,45 +1271,126 @@ final class AppModel: ObservableObject {
         statusMessage = "Baserow disconnected."
     }
 
+    func selectBaserowScript(_ scriptID: Int) {
+        guard baserowSelectedScriptID != scriptID else { return }
+        baserowSelectedScriptID = scriptID
+        currentSceneIndex = 0
+        Task { await syncBaserowScenes(force: true) }
+    }
+
+    func selectBaserowPart(_ part: String) {
+        guard baserowPartFilter != part else { return }
+        baserowPartFilter = part
+        currentSceneIndex = 0
+        Task { await syncBaserowScenes(force: true) }
+    }
+
     private func syncBaserowScenes(force: Bool) async {
         guard hasBaserowConfiguration, !isBaserowSyncing else { return }
         isBaserowSyncing = true
         defer { isBaserowSyncing = false }
         do {
-            let records = try await baserowSceneService.fetchScenes(
+            let scripts = try await baserowSceneService.fetchScripts(
+                baseURL: baserowBaseURL,
+                token: baserowToken,
+                tableID: baserowScriptsTableID
+            )
+            let allRecords = try await baserowSceneService.fetchScenes(
                 baseURL: baserowBaseURL,
                 token: baserowToken,
                 tableID: baserowTableID
             )
-            if records.isEmpty {
+            baserowScripts = scripts
+            if baserowSelectedScriptID == 0 || !scripts.contains(where: { $0.rowID == baserowSelectedScriptID }) {
+                baserowSelectedScriptID = scripts.first?.rowID ?? 0
+            }
+            let selectedScriptID = baserowSelectedScriptID
+            if selectedScriptID != 0 {
+                let scriptRecords = allRecords
+                    .filter { $0.scriptIDs.contains(selectedScriptID) }
+                    .sorted { $0.originalSceneNumber < $1.originalSceneNumber }
+                for (index, record) in scriptRecords.enumerated()
+                where record.originalSceneNumber != index + 1 {
+                    throw BaserowSceneError.invalidScenes(
+                        "Script scenes must use continuous Scene Numbers. Expected \(index + 1), found \(record.originalSceneNumber)."
+                    )
+                }
+            }
+            let availableParts = allRecords
+                .filter { selectedScriptID == 0 || $0.scriptIDs.contains(selectedScriptID) }
+                .compactMap(\.part)
+            baserowPartOptions = Self.orderedBaserowParts(from: availableParts)
+            if !baserowPartFilter.isEmpty, !baserowPartOptions.contains(baserowPartFilter) {
+                baserowPartFilter = ""
+            }
+            let matchingRecords = allRecords.filter { record in
+                (selectedScriptID == 0 || record.scriptIDs.contains(selectedScriptID))
+                    && (baserowPartFilter.isEmpty || record.part == baserowPartFilter)
+            }
+            let sourceRevision = scripts.map { "\($0.rowID):\($0.lastEditedTime)" }.joined(separator: "|")
+                + "#" + allRecords.map { "\($0.rowID):\($0.lastEditedTime)" }.joined(separator: "|")
+            let revision = "\(selectedScriptID)|\(baserowPartFilter)|\(sourceRevision)"
+            if !force, revision == baserowRevision { return }
+
+            if matchingRecords.isEmpty {
                 loadedChapter = nil
                 loadedChapterURL = nil
                 baserowRowIDsBySceneID = [:]
+                baserowOriginalSceneNumbersBySceneID = [:]
+                baserowPartBySceneID = [:]
+                baserowScriptIDsBySceneID = [:]
                 baserowLastEditedBySceneID = [:]
-                baserowRevision = ""
+                baserowRevision = revision
                 isBaserowConnected = true
                 scriptInputFormat = .baserow
                 scriptModeEnabled = true
                 readsTypedTextInsteadOfClipboard = true
                 refreshScriptScenes()
-                statusMessage = "Baserow connected. No scenes yet."
+                statusMessage = allRecords.isEmpty
+                    ? "Baserow connected. No scenes yet."
+                    : "Baserow connected. No scenes match this script or Part filter."
                 presenterOverlayController?.updateLayout()
                 return
             }
-            let revision = records.map { "\($0.rowID):\($0.lastEditedTime)" }.joined(separator: "|")
-            if !force, revision == baserowRevision { return }
+
+            let normalizedRecords = matchingRecords.enumerated().map { index, record in
+                BaserowSceneRecord(
+                    rowID: record.rowID,
+                    originalSceneNumber: record.originalSceneNumber,
+                    part: record.part,
+                    scriptIDs: record.scriptIDs,
+                    lastEditedTime: record.lastEditedTime,
+                    scene: NarrationScene(
+                        id: record.scene.id,
+                        sceneNumber: index + 1,
+                        narration: record.scene.narration,
+                        onScreen: record.scene.onScreen,
+                        code: record.scene.code,
+                        annotation: record.scene.annotation
+                    )
+                )
+            }
             let chapter = NarrationChapter(
                 schemaVersion: NarrationChapterLoader.supportedSchemaVersion,
                 chapterNumber: 1,
-                chapterTitle: "Baserow Scenes",
-                scenes: records.map(\.scene)
+                chapterTitle: baserowScripts.first(where: { $0.rowID == selectedScriptID })?.title ?? "Baserow Scenes",
+                scenes: normalizedRecords.map(\.scene)
             )
             try NarrationChapterLoader.validate(chapter)
             let previousSceneID = currentNarrationScene?.id
             loadedChapter = chapter
             loadedChapterURL = nil
-            baserowRowIDsBySceneID = Dictionary(uniqueKeysWithValues: records.map { ($0.scene.id, $0.rowID) })
-            baserowLastEditedBySceneID = Dictionary(uniqueKeysWithValues: records.compactMap { record in
+            baserowRowIDsBySceneID = Dictionary(uniqueKeysWithValues: normalizedRecords.map { ($0.scene.id, $0.rowID) })
+            baserowOriginalSceneNumbersBySceneID = Dictionary(uniqueKeysWithValues: normalizedRecords.map { ($0.scene.id, $0.originalSceneNumber) })
+            baserowPartBySceneID = Dictionary(uniqueKeysWithValues: normalizedRecords.compactMap { record in
+                guard let part = record.part else { return nil }
+                return (record.scene.id, part)
+            })
+            baserowScriptIDsBySceneID = Dictionary(uniqueKeysWithValues: normalizedRecords.compactMap { record in
+                guard let scriptID = record.scriptIDs.first else { return nil }
+                return (record.scene.id, scriptID)
+            })
+            baserowLastEditedBySceneID = Dictionary(uniqueKeysWithValues: normalizedRecords.compactMap { record in
                 guard let date = BaserowSceneService.date(from: record.lastEditedTime) else { return nil }
                 return (record.scene.id, date)
             })
@@ -1292,6 +1409,18 @@ final class AppModel: ObservableObject {
         } catch {
             if !isBaserowConnected { restoreBaserowCache() }
             statusMessage = "Baserow sync failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
+    }
+
+    private static func orderedBaserowParts(from values: [String]) -> [String] {
+        let unique = Array(Set(values))
+        let preferred = ["Introduction", "Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4", "Chapter 5", "Conclusion"]
+        return unique.sorted { lhs, rhs in
+            let leftIndex = preferred.firstIndex(of: lhs) ?? preferred.count
+            let rightIndex = preferred.firstIndex(of: rhs) ?? preferred.count
+            return leftIndex == rightIndex
+                ? lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+                : leftIndex < rightIndex
         }
     }
 
@@ -1534,7 +1663,10 @@ final class AppModel: ObservableObject {
                         rowID: rowID,
                         baseURL: self.baserowBaseURL,
                         token: self.baserowToken,
-                        tableID: self.baserowTableID
+                        tableID: self.baserowTableID,
+                        part: self.baserowPartBySceneID[changed.id],
+                        scriptID: self.baserowScriptIDsBySceneID[changed.id],
+                        sceneNumber: self.baserowOriginalSceneNumbersBySceneID[changed.id]
                     )
                     self.baserowRevision = ""
                     self.statusMessage = "Scene \(changed.sceneNumber) saved to Baserow."
