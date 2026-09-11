@@ -36,17 +36,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let requestURL = urls.first,
               requestURL.scheme == "narrationpilot",
-              requestURL.host == "import",
-              let components = URLComponents(url: requestURL, resolvingAgainstBaseURL: false),
-              let path = components.queryItems?.first(where: { $0.name == "path" })?.value,
-              !path.isEmpty else {
+              let components = URLComponents(url: requestURL, resolvingAgainstBaseURL: false) else {
             return
         }
 
-        AppModel.shared.importChapterJSON(
-            from: URL(fileURLWithPath: path),
-            confirmsReplacement: true
-        )
-        application.activate(ignoringOtherApps: true)
+        switch requestURL.host {
+        case "import":
+            guard let path = components.queryItems?.first(where: { $0.name == "path" })?.value,
+                  !path.isEmpty else {
+                return
+            }
+
+            AppModel.shared.importChapterJSON(
+                from: URL(fileURLWithPath: path),
+                confirmsReplacement: true
+            )
+            application.activate(ignoringOtherApps: true)
+        case "speak":
+            AppModel.shared.handleExternalTTSURL(requestURL)
+        case "pause":
+            AppModel.shared.handleExternalTTSURL(requestURL)
+        case "resume":
+            AppModel.shared.handleExternalTTSURL(requestURL)
+        case "stop":
+            AppModel.shared.handleExternalTTSURL(requestURL)
+        default:
+            return
+        }
     }
 }

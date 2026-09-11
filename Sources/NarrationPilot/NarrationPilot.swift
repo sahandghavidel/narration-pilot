@@ -9,6 +9,9 @@ struct NarrationPilotApp: App {
         MenuBarExtra("Narration Pilot", systemImage: "text.bubble") {
             MenuBarView()
                 .environmentObject(appModel)
+                .onOpenURL { url in
+                    appModel.handleExternalTTSURL(url)
+                }
         }
         .menuBarExtraStyle(.window)
     }

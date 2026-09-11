@@ -678,6 +678,7 @@ final class AppModel: ObservableObject {
     private static let scriptModeKey = "clipboardReader.scriptModeEnabled"
     private static let scriptInputFormatKey = "clipboardReader.scriptInputFormat"
     private static let lastChapterJSONPathKey = "clipboardReader.lastChapterJSONPath"
+    private static let externalTTSStatePath = "/tmp/narration-pilot-tts-state.json"
     private static let notionDataSourceIDKey = "clipboardReader.notion.dataSourceID"
     private static let baserowBaseURLKey = "clipboardReader.baserow.baseURL"
     private static let baserowTableIDKey = "clipboardReader.baserow.tableID"
@@ -1047,6 +1048,7 @@ final class AppModel: ObservableObject {
         registerShortcutHandlers()
         presenterOverlayController = PresenterOverlayController(appModel: self)
         sceneEditorController = SceneEditorController(appModel: self)
+        persistExternalSpeechState(.idle)
         DispatchQueue.main.async { [weak self] in
             self?.refreshPresenterOverlayVisibility()
         }
@@ -1096,6 +1098,58 @@ final class AppModel: ObservableObject {
                 waitsForUserInactivity: waitsForUserInactivity,
                 speedMultiplier: resolvedSpeedMultiplier
             )
+        }
+    }
+
+    func speakExternalNarration(_ text: String) {
+        let cleanedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedText.isEmpty else {
+            statusMessage = "Narration is empty."
+            return
+        }
+
+        cancelPendingReadSequence()
+        shouldAdvanceScriptSceneAfterSpeech = false
+        statusMessage = "Reading narration from Ultimate Video Editor…"
+        ttsManager.speak(
+            text: cleanedText,
+            speedMultiplier: speedMultiplier,
+            voiceIdentifier: selectedVoiceIdentifier
+        )
+    }
+
+    func pauseExternalNarration() {
+        guard speechState == .speaking else { return }
+        ttsManager.togglePauseResume()
+    }
+
+    func resumeExternalNarration() {
+        guard speechState == .paused else { return }
+        ttsManager.togglePauseResume()
+    }
+
+    func stopExternalNarration() {
+        stopReading()
+    }
+
+    func handleExternalTTSURL(_ requestURL: URL) {
+        guard requestURL.scheme == "narrationpilot",
+              let components = URLComponents(url: requestURL, resolvingAgainstBaseURL: false) else {
+            return
+        }
+
+        switch requestURL.host {
+        case "speak":
+            guard let text = components.queryItems?.first(where: { $0.name == "text" })?.value else { return }
+            speakExternalNarration(text)
+        case "pause":
+            pauseExternalNarration()
+        case "resume":
+            resumeExternalNarration()
+        case "stop":
+            stopExternalNarration()
+        default:
+            return
         }
     }
 
@@ -2421,6 +2475,7 @@ final class AppModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 self?.speechState = state
+                self?.persistExternalSpeechState(state)
                 if state != .speaking {
                     self?.statusMessage = state.label
                 }
@@ -2452,6 +2507,33 @@ final class AppModel: ObservableObject {
                 self?.handleCompletedSpeech()
             }
             .store(in: &cancellables)
+    }
+
+    private func persistExternalSpeechState(_ state: SpeechState) {
+        let stateValue: String
+        switch state {
+        case .idle:
+            stateValue = "idle"
+        case .speaking:
+            stateValue = "speaking"
+        case .paused:
+            stateValue = "paused"
+        case .stopping:
+            stateValue = "stopping"
+        }
+
+        let payload: [String: Any] = [
+            "state": stateValue,
+            "updatedAt": Date().timeIntervalSince1970
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else {
+            return
+        }
+
+        try? data.write(
+            to: URL(fileURLWithPath: Self.externalTTSStatePath),
+            options: .atomic
+        )
     }
 
     private func handleCompletedSpeech() {
