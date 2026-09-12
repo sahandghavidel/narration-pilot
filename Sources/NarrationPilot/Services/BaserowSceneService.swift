@@ -129,6 +129,33 @@ final class BaserowSceneService {
         )
     }
 
+    func deleteScene(rowID: Int, baseURL: String, token: String, tableID: String) async throws {
+        _ = try await request(
+            baseURL: baseURL,
+            path: "/api/database/rows/table/\(clean(tableID))/\(rowID)/",
+            method: "DELETE",
+            token: token,
+            queryItems: [URLQueryItem(name: "user_field_names", value: "true")]
+        )
+    }
+
+    func updateSceneNumber(
+        rowID: Int,
+        sceneNumber: Int,
+        baseURL: String,
+        token: String,
+        tableID: String
+    ) async throws {
+        _ = try await request(
+            baseURL: baseURL,
+            path: "/api/database/rows/table/\(clean(tableID))/\(rowID)/",
+            method: "PATCH",
+            token: token,
+            queryItems: [URLQueryItem(name: "user_field_names", value: "true")],
+            body: ["Scene Number": sceneNumber]
+        )
+    }
+
     static func isBlankScene(narration: String, onScreen: String) -> Bool {
         narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && onScreen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

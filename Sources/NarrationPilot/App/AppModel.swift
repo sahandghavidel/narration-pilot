@@ -1341,6 +1341,63 @@ final class AppModel: ObservableObject {
         Task { await syncBaserowScenes(force: true) }
     }
 
+    func deleteBaserowScene(sceneID: String) async {
+        guard scriptInputFormat == .baserow,
+              let rowID = baserowRowIDsBySceneID[sceneID],
+              let originalSceneNumber = baserowOriginalSceneNumbersBySceneID[sceneID],
+              let scriptID = baserowScriptIDsBySceneID[sceneID] else {
+            statusMessage = "The selected Baserow scene could not be identified."
+            return
+        }
+
+        if isBaserowSyncing {
+            await syncBaserowScenes(force: true)
+        }
+
+        do {
+            let records = try await baserowSceneService.fetchScenes(
+                baseURL: baserowBaseURL,
+                token: baserowToken,
+                tableID: baserowTableID
+            )
+            guard records.contains(where: { $0.rowID == rowID && $0.scriptIDs.contains(scriptID) }) else {
+                statusMessage = "That Baserow scene no longer exists. Refreshing scenes…"
+                await syncBaserowScenes(force: true)
+                return
+            }
+
+            statusMessage = "Deleting Scene \(originalSceneNumber) from Baserow…"
+            try await baserowSceneService.deleteScene(
+                rowID: rowID,
+                baseURL: baserowBaseURL,
+                token: baserowToken,
+                tableID: baserowTableID
+            )
+
+            let laterRecords = records
+                .filter { $0.rowID != rowID && $0.scriptIDs.contains(scriptID) && $0.originalSceneNumber > originalSceneNumber }
+                .sorted { $0.originalSceneNumber < $1.originalSceneNumber }
+            for record in laterRecords {
+                try await baserowSceneService.updateSceneNumber(
+                    rowID: record.rowID,
+                    sceneNumber: record.originalSceneNumber - 1,
+                    baseURL: baserowBaseURL,
+                    token: baserowToken,
+                    tableID: baserowTableID
+                )
+            }
+
+            baserowRevision = ""
+            currentSceneIndex = min(currentSceneIndex, max((loadedChapter?.scenes.count ?? 1) - 2, 0))
+            await syncBaserowScenes(force: true)
+            statusMessage = "Scene deleted from Baserow. \(scriptSceneProgress)"
+        } catch {
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            statusMessage = "Baserow delete failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
+    }
+
     private func syncBaserowScenes(force: Bool) async {
         guard hasBaserowConfiguration else { return }
         if isBaserowSyncing {

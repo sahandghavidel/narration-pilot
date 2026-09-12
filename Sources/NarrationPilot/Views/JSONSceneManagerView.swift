@@ -20,6 +20,7 @@ struct JSONSceneManagerView: View {
     @State private var previewFontSize = UserDefaults.standard.object(forKey: "NarrationPilot.jsonPreviewFontSize") as? Double ?? 14
     @State private var sortByNewestEdited = false
     @State private var pendingSourceChapter: NarrationChapter?
+    @State private var isDeletingScene = false
 
     private enum EditableField: Hashable { case narration, onScreen, code }
 
@@ -106,6 +107,10 @@ struct JSONSceneManagerView: View {
             Text(workingChapter.chapterTitle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if appModel.scriptInputFormat == .baserow {
+                baserowSourceSelectors
+            }
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -201,6 +206,13 @@ struct JSONSceneManagerView: View {
                 Button("Save Changes") { _ = saveChanges() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!hasUnsavedChanges)
+                if appModel.scriptInputFormat == .baserow {
+                    Button("Delete Scene", role: .destructive) {
+                        deleteScene(workingChapter.scenes[selectedIndex])
+                    }
+                    .disabled(hasUnsavedChanges || isDeletingScene || appModel.isBaserowSyncing)
+                    .help(hasUnsavedChanges ? "Save or undo the current edit before deleting this scene." : "Delete this scene from Baserow")
+                }
                 Spacer()
                 Button("Previous") { select(max(selectedIndex - 1, 0)) }
                     .disabled(selectedIndex == 0)
@@ -217,6 +229,45 @@ struct JSONSceneManagerView: View {
                 }
             }
         )
+    }
+
+    private var baserowSourceSelectors: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Picker("Script", selection: Binding(
+                get: { appModel.baserowSelectedScriptID },
+                set: { appModel.selectBaserowScript($0) }
+            )) {
+                ForEach(appModel.baserowScripts) { script in
+                    Text(script.title).tag(script.rowID)
+                }
+            }
+            .disabled(appModel.isBaserowSyncing || isDeletingScene)
+
+            Picker("Part", selection: Binding(
+                get: { appModel.baserowPartFilter },
+                set: { appModel.selectBaserowPart($0) }
+            )) {
+                Text("All parts").tag("")
+                ForEach(appModel.baserowPartOptions, id: \.self) { part in
+                    Text(part).tag(part)
+                }
+            }
+            .disabled(appModel.isBaserowSyncing || isDeletingScene)
+
+            if appModel.isBaserowSyncing {
+                ProgressView("Refreshing Baserow scenes…")
+                    .controlSize(.small)
+                    .font(.caption)
+            }
+        }
+    }
+
+    private func deleteScene(_ scene: NarrationScene) {
+        isDeletingScene = true
+        Task {
+            await appModel.deleteBaserowScene(sceneID: scene.id)
+            isDeletingScene = false
+        }
     }
 
     @ViewBuilder
