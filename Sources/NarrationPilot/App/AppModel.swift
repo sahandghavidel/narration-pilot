@@ -822,6 +822,8 @@ final class AppModel: ObservableObject {
     private var baserowScriptIDsBySceneID: [String: Int] = [:]
     private var baserowLastEditedBySceneID: [String: Date] = [:]
     private var baserowRevision = ""
+    private var baserowSyncRequested = false
+    private var baserowSyncWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// Notion "last edited" timestamp for a scene ID, when the chapter came from Notion.
     func notionLastEdited(forSceneID sceneID: String) -> Date? {
@@ -1340,9 +1342,28 @@ final class AppModel: ObservableObject {
     }
 
     private func syncBaserowScenes(force: Bool) async {
-        guard hasBaserowConfiguration, !isBaserowSyncing else { return }
+        guard hasBaserowConfiguration else { return }
+        if isBaserowSyncing {
+            baserowSyncRequested = true
+            await withCheckedContinuation { continuation in
+                baserowSyncWaiters.append(continuation)
+            }
+            return
+        }
+
         isBaserowSyncing = true
-        defer { isBaserowSyncing = false }
+        repeat {
+            baserowSyncRequested = false
+            await performBaserowSync(force: force)
+        } while baserowSyncRequested
+        isBaserowSyncing = false
+
+        let waiters = baserowSyncWaiters
+        baserowSyncWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func performBaserowSync(force: Bool) async {
         do {
             let scripts = try await baserowSceneService.fetchScripts(
                 baseURL: baserowBaseURL,

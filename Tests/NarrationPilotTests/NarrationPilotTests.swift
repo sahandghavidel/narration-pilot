@@ -22,6 +22,14 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertFalse(BaserowSceneService.isBlankScene(narration: "", onScreen: "Show the editor."))
     }
 
+    func testBaserowSceneServiceParsesLastEditedWithMicroseconds() {
+        XCTAssertNotNil(BaserowSceneService.date(from: "2026-09-11T06:40:43.702896Z"))
+    }
+
+    func testBaserowSceneServiceParsesLastEditedWithoutFractionalSeconds() {
+        XCTAssertNotNil(BaserowSceneService.date(from: "2026-09-11T06:40:43Z"))
+    }
+
     func testOnScreenLinkExtractorFindsHTTPAndHTTPSLinksInOrder() {
         let urls = OnScreenLinkExtractor.urls(
             in: "Open https://github.com/Leonxlnx/unlazy and http://example.com/docs."

@@ -19,6 +19,7 @@ struct JSONSceneManagerView: View {
     @FocusState private var focusedField: EditableField?
     @State private var previewFontSize = UserDefaults.standard.object(forKey: "NarrationPilot.jsonPreviewFontSize") as? Double ?? 14
     @State private var sortByNewestEdited = false
+    @State private var pendingSourceChapter: NarrationChapter?
 
     private enum EditableField: Hashable { case narration, onScreen, code }
 
@@ -57,6 +58,15 @@ struct JSONSceneManagerView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .sceneEditorShouldClose)) { _ in
             if commitEdits() { close() }
+        }
+        .onReceive(appModel.$loadedChapter) { updatedChapter in
+            guard let updatedChapter, updatedChapter != workingChapter else { return }
+            if hasUnsavedChanges {
+                pendingSourceChapter = updatedChapter
+                appModel.statusMessage = "New scene data is ready. Save the current edit before refreshing."
+            } else {
+                applySourceChapter(updatedChapter)
+            }
         }
         .background(
             SceneArrowKeyMonitor { direction in
@@ -349,9 +359,33 @@ struct JSONSceneManagerView: View {
         codeInstruction = scene.code?.instruction ?? scene.code.map { "\($0.action.rawValue.capitalized) this code in \($0.targetFile)." } ?? ""
     }
 
+    private func applySourceChapter(_ updatedChapter: NarrationChapter) {
+        let selectedSceneID = workingChapter.scenes.indices.contains(selectedIndex)
+            ? workingChapter.scenes[selectedIndex].id
+            : nil
+        workingChapter = updatedChapter
+        if let selectedSceneID,
+           let matchingIndex = updatedChapter.scenes.firstIndex(where: { $0.id == selectedSceneID }) {
+            selectedIndex = matchingIndex
+        } else {
+            selectedIndex = min(selectedIndex, max(updatedChapter.scenes.count - 1, 0))
+        }
+        pendingSourceChapter = nil
+        loadDraft()
+        activeField = nil
+        focusedField = nil
+        appModel.selectSceneForEditing(selectedIndex)
+    }
+
     @discardableResult
     private func saveChanges() -> Bool {
-        let old = workingChapter.scenes[selectedIndex]
+        let selectedSceneID = workingChapter.scenes[selectedIndex].id
+        let baseChapter = pendingSourceChapter ?? workingChapter
+        guard let targetIndex = baseChapter.scenes.firstIndex(where: { $0.id == selectedSceneID }) else {
+            appModel.statusMessage = "This scene was removed by the latest source update. Refresh before editing it."
+            return false
+        }
+        let old = baseChapter.scenes[targetIndex]
         let updatedCode = old.code.map {
             NarrationCode(
                 text: codeText,
@@ -366,17 +400,19 @@ struct JSONSceneManagerView: View {
             onScreen: onScreen, code: updatedCode,
             annotation: annotation.isEmpty ? nil : annotation
         )
-        var scenes = workingChapter.scenes
-        scenes[selectedIndex] = updated
+        var scenes = baseChapter.scenes
+        scenes[targetIndex] = updated
         let updatedChapter = NarrationChapter(
-            schemaVersion: workingChapter.schemaVersion, chapterNumber: workingChapter.chapterNumber,
-            chapterTitle: workingChapter.chapterTitle, scenes: scenes
+            schemaVersion: baseChapter.schemaVersion, chapterNumber: baseChapter.chapterNumber,
+            chapterTitle: baseChapter.chapterTitle, scenes: scenes
         )
         do {
             try NarrationChapterLoader.validate(updatedChapter)
             let data = try JSONEncoder.narrationPilot.encode(updatedChapter)
             appModel.saveEditedChapterJSON(String(data: data, encoding: .utf8) ?? "")
             workingChapter = updatedChapter
+            selectedIndex = targetIndex
+            pendingSourceChapter = nil
             activeField = nil
             focusedField = nil
             return true
