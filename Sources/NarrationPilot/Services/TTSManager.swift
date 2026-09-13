@@ -20,6 +20,7 @@ final class TTSManager: NSObject, ObservableObject {
     }
 
     private var activeEngine: ActiveEngine = .none
+    private var activeAVUtteranceID: ObjectIdentifier?
     private var queuedSegments: [String] = []
     private var queuedSegmentTask: DispatchWorkItem?
     private var queuedPause: Double = 0
@@ -130,6 +131,7 @@ final class TTSManager: NSObject, ObservableObject {
 
         state = .speaking
         activeEngine = .avSpeech
+        activeAVUtteranceID = ObjectIdentifier(utterance)
         synthesizer.speak(utterance)
     }
 
@@ -145,6 +147,7 @@ final class TTSManager: NSObject, ObservableObject {
             synthesizer.stopSpeaking(at: .immediate)
         }
 
+        activeAVUtteranceID = nil
         activeEngine = .none
     }
 
@@ -241,6 +244,7 @@ final class TTSManager: NSObject, ObservableObject {
         }
 
         if avActive {
+            activeAVUtteranceID = nil
             synthesizer.stopSpeaking(at: .immediate)
         }
 
@@ -304,25 +308,35 @@ final class TTSManager: NSObject, ObservableObject {
 
 extension TTSManager: AVSpeechSynthesizerDelegate {
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        let utteranceID = ObjectIdentifier(utterance)
         DispatchQueue.main.async {
+            guard utteranceID == self.activeAVUtteranceID else { return }
+            self.activeAVUtteranceID = nil
             self.finishSegment(finished: true)
         }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        let utteranceID = ObjectIdentifier(utterance)
         DispatchQueue.main.async {
+            guard utteranceID == self.activeAVUtteranceID else { return }
+            self.activeAVUtteranceID = nil
             self.finishSegment(finished: false)
         }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didPause utterance: AVSpeechUtterance) {
+        let utteranceID = ObjectIdentifier(utterance)
         DispatchQueue.main.async {
+            guard utteranceID == self.activeAVUtteranceID else { return }
             self.state = .paused
         }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didContinue utterance: AVSpeechUtterance) {
+        let utteranceID = ObjectIdentifier(utterance)
         DispatchQueue.main.async {
+            guard utteranceID == self.activeAVUtteranceID else { return }
             self.state = .speaking
         }
     }
@@ -331,7 +345,7 @@ extension TTSManager: AVSpeechSynthesizerDelegate {
 extension TTSManager: NSSpeechSynthesizerDelegate {
     func speechSynthesizer(_ sender: NSSpeechSynthesizer, didFinishSpeaking finishedSpeaking: Bool) {
         DispatchQueue.main.async {
-            guard self.activeEngine == .systemSpeech else {
+            guard self.activeEngine == .systemSpeech, !sender.isSpeaking else {
                 return
             }
 

@@ -156,6 +156,38 @@ final class BaserowSceneService {
         )
     }
 
+    func createEmptyScene(
+        sceneNumber: Int,
+        part: String?,
+        scriptID: Int,
+        baseURL: String,
+        token: String,
+        tableID: String
+    ) async throws -> Int {
+        var fields: [String: Any] = [
+            "Scene Number": sceneNumber,
+            "Narration": "",
+            "On Screen": "",
+            "Annotation": "",
+            "Code": "",
+            "Language": "",
+            "Target File": "",
+            "Code Instruction": "",
+            "Script": [scriptID]
+        ]
+        if let part, !part.isEmpty { fields["Part"] = part }
+        let result = try await request(
+            baseURL: baseURL,
+            path: "/api/database/rows/table/\(clean(tableID))/",
+            method: "POST",
+            token: token,
+            queryItems: [URLQueryItem(name: "user_field_names", value: "true")],
+            body: fields
+        )
+        guard let rowID = integer(result["id"]) else { throw BaserowSceneError.invalidResponse }
+        return rowID
+    }
+
     static func isBlankScene(narration: String, onScreen: String) -> Bool {
         narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && onScreen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -165,7 +197,6 @@ final class BaserowSceneService {
         guard let rowID = integer(row["id"]) else { throw BaserowSceneError.invalidResponse }
         let narration = string(row["Narration"])
         let onScreen = string(row["On Screen"])
-        if Self.isBlankScene(narration: narration, onScreen: onScreen) { return nil }
 
         guard let sceneNumber = integer(row["Scene Number"]), sceneNumber > 0 else {
             throw BaserowSceneError.invalidScenes("A Baserow row is missing a valid Scene Number.")
@@ -173,6 +204,7 @@ final class BaserowSceneService {
 
         let part = selectValue(row["Part"])
         let scriptIDs = linkIDs(row["Script"])
+        if Self.isBlankScene(narration: narration, onScreen: onScreen), scriptIDs.isEmpty { return nil }
 
         let codeText = string(row["Code"])
         let code: NarrationCode?
@@ -192,10 +224,6 @@ final class BaserowSceneService {
                 action: inferredAction(from: instruction),
                 instruction: instruction.isEmpty ? nil : instruction
             )
-        }
-
-        guard !narration.isEmpty, !onScreen.isEmpty else {
-            throw BaserowSceneError.invalidScenes("Scene \(sceneNumber) needs Narration and On Screen values.")
         }
 
         return BaserowSceneRecord(

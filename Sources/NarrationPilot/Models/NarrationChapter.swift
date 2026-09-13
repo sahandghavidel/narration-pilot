@@ -46,7 +46,7 @@ enum NarrationChapterLoader {
 
     static func load(from url: URL) throws -> NarrationChapter { try decode(Data(contentsOf: url)) }
 
-    static func decode(_ data: Data) throws -> NarrationChapter {
+    static func decode(_ data: Data, allowsEmptySceneContent: Bool = false) throws -> NarrationChapter {
         let version = try schemaVersion(in: data)
         let chapter: NarrationChapter
         do {
@@ -59,11 +59,11 @@ enum NarrationChapterLoader {
             }
         } catch let error as NarrationChapterError { throw error }
         catch { throw NarrationChapterError.invalidJSON(error.localizedDescription) }
-        try validate(chapter)
+        try validate(chapter, allowsEmptySceneContent: allowsEmptySceneContent)
         return chapter
     }
 
-    static func validate(_ chapter: NarrationChapter) throws {
+    static func validate(_ chapter: NarrationChapter, allowsEmptySceneContent: Bool = false) throws {
         guard chapter.schemaVersion == supportedSchemaVersion else { throw NarrationChapterError.unsupportedSchemaVersion(chapter.schemaVersion) }
         guard chapter.chapterNumber > 0 else { throw NarrationChapterError.invalidChapterNumber }
         guard !chapter.chapterTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NarrationChapterError.missingChapterTitle }
@@ -74,8 +74,10 @@ enum NarrationChapterLoader {
             let id = scene.id.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !id.isEmpty else { throw NarrationChapterError.missingSceneID(scene.sceneNumber) }
             guard sceneIDs.insert(id).inserted else { throw NarrationChapterError.duplicateSceneID(id) }
-            guard !scene.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NarrationChapterError.emptyNarration(scene.sceneNumber) }
-            guard !scene.onScreen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NarrationChapterError.emptyOnScreenResult(scene.sceneNumber) }
+            if !allowsEmptySceneContent {
+                guard !scene.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NarrationChapterError.emptyNarration(scene.sceneNumber) }
+                guard !scene.onScreen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NarrationChapterError.emptyOnScreenResult(scene.sceneNumber) }
+            }
             if let code = scene.code {
                 guard !code.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !code.language.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

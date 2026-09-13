@@ -1398,6 +1398,82 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func addBaserowScene(afterSceneID sceneID: String) async {
+        guard scriptInputFormat == .baserow,
+              let originalSceneNumber = baserowOriginalSceneNumbersBySceneID[sceneID],
+              let scriptID = baserowScriptIDsBySceneID[sceneID] else {
+            statusMessage = "The selected Baserow scene could not be identified."
+            return
+        }
+        let part = baserowPartBySceneID[sceneID]
+
+        if isBaserowSyncing {
+            await syncBaserowScenes(force: true)
+        }
+
+        var renumberedRecords: [BaserowSceneRecord] = []
+        var createdRowID: Int?
+        do {
+            let records = try await baserowSceneService.fetchScenes(
+                baseURL: baserowBaseURL,
+                token: baserowToken,
+                tableID: baserowTableID
+            )
+            guard records.contains(where: { $0.scene.id == sceneID && $0.scriptIDs.contains(scriptID) }) else {
+                statusMessage = "That Baserow scene no longer exists. Refreshing scenes…"
+                await syncBaserowScenes(force: true)
+                return
+            }
+
+            statusMessage = "Adding a scene after Scene \(originalSceneNumber)…"
+            let laterRecords = records
+                .filter { $0.scriptIDs.contains(scriptID) && $0.originalSceneNumber > originalSceneNumber }
+                .sorted { $0.originalSceneNumber > $1.originalSceneNumber }
+            for record in laterRecords {
+                try await baserowSceneService.updateSceneNumber(
+                    rowID: record.rowID,
+                    sceneNumber: record.originalSceneNumber + 1,
+                    baseURL: baserowBaseURL,
+                    token: baserowToken,
+                    tableID: baserowTableID
+                )
+                renumberedRecords.append(record)
+            }
+
+            createdRowID = try await baserowSceneService.createEmptyScene(
+                sceneNumber: originalSceneNumber + 1,
+                part: part,
+                scriptID: scriptID,
+                baseURL: baserowBaseURL,
+                token: baserowToken,
+                tableID: baserowTableID
+            )
+
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            if let createdRowID,
+               let index = loadedChapter?.scenes.firstIndex(where: { $0.id == "baserow-row-\(createdRowID)" }) {
+                currentSceneIndex = index
+            }
+            statusMessage = "Empty scene added. \(scriptSceneProgress)"
+        } catch {
+            if createdRowID == nil {
+                for record in renumberedRecords.reversed() {
+                    try? await baserowSceneService.updateSceneNumber(
+                        rowID: record.rowID,
+                        sceneNumber: record.originalSceneNumber,
+                        baseURL: baserowBaseURL,
+                        token: baserowToken,
+                        tableID: baserowTableID
+                    )
+                }
+            }
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            statusMessage = "Baserow add failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
+    }
+
     private func syncBaserowScenes(force: Bool) async {
         guard hasBaserowConfiguration else { return }
         if isBaserowSyncing {
@@ -1508,7 +1584,7 @@ final class AppModel: ObservableObject {
                 chapterTitle: baserowScripts.first(where: { $0.rowID == selectedScriptID })?.title ?? "Baserow Scenes",
                 scenes: normalizedRecords.map(\.scene)
             )
-            try NarrationChapterLoader.validate(chapter)
+            try NarrationChapterLoader.validate(chapter, allowsEmptySceneContent: true)
             let previousSceneID = currentNarrationScene?.id
             loadedChapter = chapter
             loadedChapterURL = nil
@@ -1563,7 +1639,8 @@ final class AppModel: ObservableObject {
     }
 
     private func restoreBaserowCache() {
-        guard let chapter = try? NarrationChapterLoader.load(from: baserowCacheURL) else { return }
+        guard let data = try? Data(contentsOf: baserowCacheURL),
+              let chapter = try? NarrationChapterLoader.decode(data, allowsEmptySceneContent: true) else { return }
         loadedChapter = chapter
         loadedChapterURL = nil
         scriptInputFormat = .baserow
@@ -1774,7 +1851,10 @@ final class AppModel: ObservableObject {
 
     private func saveEditedBaserowChapter(_ text: String) {
         do {
-            let chapter = try NarrationChapterLoader.decode(Data(text.utf8))
+            let chapter = try NarrationChapterLoader.decode(
+                Data(text.utf8),
+                allowsEmptySceneContent: true
+            )
             guard let oldChapter = loadedChapter,
                   let changed = chapter.scenes.first(where: { scene in
                       oldChapter.scenes.first(where: { $0.id == scene.id }) != scene
@@ -1943,6 +2023,24 @@ final class AppModel: ObservableObject {
         currentSceneIndex = index
         statusMessage = scriptSceneProgress
         presenterOverlayController?.updateLayout()
+    }
+
+    func previewCurrentSceneNarration() {
+        guard let narration = currentNarrationScene?.narration
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !narration.isEmpty else {
+            stopSpeechForSceneNavigation()
+            return
+        }
+
+        shouldAdvanceScriptSceneAfterSpeech = false
+        cancelPendingReadSequence()
+        statusMessage = "Reading narration for \(scriptSceneProgress)…"
+        ttsManager.speak(
+            text: narration,
+            speedMultiplier: speedMultiplier,
+            voiceIdentifier: selectedVoiceIdentifier
+        )
     }
 
     func refreshScriptScenes() {

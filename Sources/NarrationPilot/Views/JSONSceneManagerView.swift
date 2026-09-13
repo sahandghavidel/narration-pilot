@@ -21,6 +21,7 @@ struct JSONSceneManagerView: View {
     @State private var sortByNewestEdited = false
     @State private var pendingSourceChapter: NarrationChapter?
     @State private var isDeletingScene = false
+    @State private var isAddingScene = false
 
     private enum EditableField: Hashable { case narration, onScreen, code }
 
@@ -82,7 +83,7 @@ struct JSONSceneManagerView: View {
         guard let position = order.firstIndex(of: selectedIndex) else { return }
         let next = position + (direction == .up ? -1 : 1)
         guard order.indices.contains(next) else { return }
-        select(order[next])
+        select(order[next], autoplayNarration: true)
     }
 
     private var sceneList: some View {
@@ -207,10 +208,15 @@ struct JSONSceneManagerView: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(!hasUnsavedChanges)
                 if appModel.scriptInputFormat == .baserow {
+                    Button("Add Scene") {
+                        addScene(after: workingChapter.scenes[selectedIndex])
+                    }
+                    .disabled(hasUnsavedChanges || isAddingScene || isDeletingScene || appModel.isBaserowSyncing)
+                    .help(hasUnsavedChanges ? "Save or undo the current edit before adding a scene." : "Add an empty scene after this scene")
                     Button("Delete Scene", role: .destructive) {
                         deleteScene(workingChapter.scenes[selectedIndex])
                     }
-                    .disabled(hasUnsavedChanges || isDeletingScene || appModel.isBaserowSyncing)
+                    .disabled(hasUnsavedChanges || isAddingScene || isDeletingScene || appModel.isBaserowSyncing)
                     .help(hasUnsavedChanges ? "Save or undo the current edit before deleting this scene." : "Delete this scene from Baserow")
                 }
                 Spacer()
@@ -241,7 +247,7 @@ struct JSONSceneManagerView: View {
                     Text(script.title).tag(script.rowID)
                 }
             }
-            .disabled(appModel.isBaserowSyncing || isDeletingScene)
+            .disabled(appModel.isBaserowSyncing || isAddingScene || isDeletingScene)
 
             Picker("Part", selection: Binding(
                 get: { appModel.baserowPartFilter },
@@ -252,7 +258,7 @@ struct JSONSceneManagerView: View {
                     Text(part).tag(part)
                 }
             }
-            .disabled(appModel.isBaserowSyncing || isDeletingScene)
+            .disabled(appModel.isBaserowSyncing || isAddingScene || isDeletingScene)
 
             if appModel.isBaserowSyncing {
                 ProgressView("Refreshing Baserow scenes…")
@@ -267,6 +273,14 @@ struct JSONSceneManagerView: View {
         Task {
             await appModel.deleteBaserowScene(sceneID: scene.id)
             isDeletingScene = false
+        }
+    }
+
+    private func addScene(after scene: NarrationScene) {
+        isAddingScene = true
+        Task {
+            await appModel.addBaserowScene(afterSceneID: scene.id)
+            isAddingScene = false
         }
     }
 
@@ -458,7 +472,10 @@ struct JSONSceneManagerView: View {
             chapterTitle: baseChapter.chapterTitle, scenes: scenes
         )
         do {
-            try NarrationChapterLoader.validate(updatedChapter)
+            try NarrationChapterLoader.validate(
+                updatedChapter,
+                allowsEmptySceneContent: appModel.scriptInputFormat == .baserow
+            )
             let data = try JSONEncoder.narrationPilot.encode(updatedChapter)
             appModel.saveEditedChapterJSON(String(data: data, encoding: .utf8) ?? "")
             workingChapter = updatedChapter
@@ -553,13 +570,16 @@ struct JSONSceneManagerView: View {
         return .purple
     }
 
-    private func select(_ index: Int) {
+    private func select(_ index: Int, autoplayNarration: Bool = false) {
         guard commitEdits() else { return }
         selectedIndex = index
         loadDraft()
         activeField = nil
         focusedField = nil
         appModel.selectSceneForEditing(index)
+        if autoplayNarration {
+            appModel.previewCurrentSceneNarration()
+        }
         // Resign first responder so keyboard focus leaves any text view (e.g. annotation).
         if let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0 is NSPanel }) {
             window.makeFirstResponder(nil)
