@@ -50,6 +50,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var baserowPartOptions: [String] = []
     @Published private(set) var baserowUndoActionName: String?
     @Published private(set) var isUndoingBaserowOperation = false
+    @Published private(set) var sceneManagerRequestedSceneID: String?
+    @Published private(set) var sceneManagerSelectionRevision = UUID()
     @Published private(set) var isSceneManagerNarrationQueuePlaying = false
     @Published private(set) var sceneManagerNarrationSceneID: String?
 
@@ -1407,6 +1409,7 @@ final class AppModel: ObservableObject {
             baserowRevision = ""
             currentSceneIndex = min(currentSceneIndex, max((loadedChapter?.scenes.count ?? 1) - 2, 0))
             await syncBaserowScenes(force: true)
+            requestSceneManagerSelection(at: currentSceneIndex)
             await registerBaserowUndo(
                 actionName: "Delete Scene", scriptID: scriptID,
                 before: undoSnapshot, preferredSceneNumber: originalSceneNumber
@@ -1477,6 +1480,7 @@ final class AppModel: ObservableObject {
                let index = loadedChapter?.scenes.firstIndex(where: { $0.id == "baserow-row-\(createdRowID)" }) {
                 currentSceneIndex = index
             }
+            requestSceneManagerSelection(at: currentSceneIndex)
             await registerBaserowUndo(
                 actionName: "Add Scene", scriptID: scriptID,
                 before: undoSnapshot, preferredSceneNumber: originalSceneNumber
@@ -1573,6 +1577,7 @@ final class AppModel: ObservableObject {
 
             baserowRevision = ""
             await syncBaserowScenes(force: true)
+            requestSceneManagerSelection(sceneID: current.scene.id)
             await registerBaserowUndo(
                 actionName: "Combine Scenes", scriptID: scriptID,
                 before: undoSnapshot, preferredSceneNumber: current.originalSceneNumber
@@ -1675,6 +1680,7 @@ final class AppModel: ObservableObject {
 
             baserowRevision = ""
             await syncBaserowScenes(force: true)
+            requestSceneManagerSelection(sceneID: original.scene.id)
             await registerBaserowUndo(
                 actionName: "Separate Scene", scriptID: scriptID,
                 before: undoSnapshot, preferredSceneNumber: original.originalSceneNumber
@@ -1744,6 +1750,7 @@ final class AppModel: ObservableObject {
             }) {
                 currentSceneIndex = index
             }
+            requestSceneManagerSelection(at: currentSceneIndex)
             statusMessage = "\(entry.actionName) undone. \(scriptSceneProgress)"
         } catch {
             baserowRevision = ""
@@ -1778,6 +1785,16 @@ final class AppModel: ObservableObject {
     private func clearBaserowUndo() {
         baserowUndoEntry = nil
         baserowUndoActionName = nil
+    }
+
+    private func requestSceneManagerSelection(sceneID: String) {
+        sceneManagerRequestedSceneID = sceneID
+        sceneManagerSelectionRevision = UUID()
+    }
+
+    private func requestSceneManagerSelection(at index: Int) {
+        guard let scenes = loadedChapter?.scenes, scenes.indices.contains(index) else { return }
+        requestSceneManagerSelection(sceneID: scenes[index].id)
     }
 
     private func restoreBaserowScript(

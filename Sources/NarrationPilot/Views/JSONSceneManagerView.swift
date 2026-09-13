@@ -23,6 +23,8 @@ struct JSONSceneManagerView: View {
     @State private var isDeletingScene = false
     @State private var isAddingScene = false
     @State private var isTransformingScene = false
+    @State private var scrollRequestRevision = UUID()
+    @State private var animateNextScroll = false
 
     private enum EditableField: Hashable { case narration, onScreen, code }
 
@@ -74,11 +76,12 @@ struct JSONSceneManagerView: View {
         .onReceive(appModel.$sceneManagerNarrationSceneID) { sceneID in
             guard let sceneID,
                   let index = workingChapter.scenes.firstIndex(where: { $0.id == sceneID }) else { return }
-            selectedIndex = index
-            loadDraft()
-            activeField = nil
-            focusedField = nil
-            appModel.selectSceneForEditing(index)
+            applySelection(index, autoplayNarration: false, animatedScroll: true)
+        }
+        .onReceive(appModel.$sceneManagerSelectionRevision.dropFirst()) { _ in
+            guard let sceneID = appModel.sceneManagerRequestedSceneID,
+                  let index = workingChapter.scenes.firstIndex(where: { $0.id == sceneID }) else { return }
+            applySelection(index, autoplayNarration: false, animatedScroll: false)
         }
         .onDisappear {
             if appModel.isSceneManagerNarrationQueuePlaying {
@@ -110,6 +113,7 @@ struct JSONSceneManagerView: View {
                 if appModel.hasConnectedSceneSource {
                     Button {
                         sortByNewestEdited.toggle()
+                        requestSelectedSceneScroll(animated: false)
                     } label: {
                         Label(sortByNewestEdited ? "Newest" : "Order",
                               systemImage: sortByNewestEdited ? "clock.arrow.circlepath" : "list.number")
@@ -134,11 +138,7 @@ struct JSONSceneManagerView: View {
                         ForEach(displayedSceneIndices, id: \.self) { index in
                             let scene = workingChapter.scenes[index]
                             Button {
-                                guard commitEdits() else { return }
-                                selectedIndex = index
-                                loadDraft()
-                                activeField = nil
-                                appModel.selectSceneForEditing(index)
+                                applySelection(index, autoplayNarration: false, animatedScroll: true)
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack(spacing: 5) {
@@ -164,13 +164,18 @@ struct JSONSceneManagerView: View {
                                 )
                             }
                             .buttonStyle(.plain)
-                            .id(index)
+                            .id(scene.id)
                         }
                     }
                 }
                 .onAppear {
                     DispatchQueue.main.async {
-                        proxy.scrollTo(selectedIndex, anchor: .top)
+                        scrollSelectedScene(using: proxy, animated: false)
+                    }
+                }
+                .onChange(of: scrollRequestRevision) { _ in
+                    DispatchQueue.main.async {
+                        scrollSelectedScene(using: proxy, animated: animateNextScroll)
                     }
                 }
             }
@@ -525,6 +530,7 @@ struct JSONSceneManagerView: View {
         activeField = nil
         focusedField = nil
         appModel.selectSceneForEditing(selectedIndex)
+        requestSelectedSceneScroll(animated: false)
     }
 
     @discardableResult
@@ -656,18 +662,40 @@ struct JSONSceneManagerView: View {
     }
 
     private func select(_ index: Int, autoplayNarration: Bool = false) {
-        guard commitEdits() else { return }
+        applySelection(index, autoplayNarration: autoplayNarration, animatedScroll: true)
+    }
+
+    private func applySelection(_ index: Int, autoplayNarration: Bool, animatedScroll: Bool) {
+        guard workingChapter.scenes.indices.contains(index), commitEdits() else { return }
         selectedIndex = index
         loadDraft()
         activeField = nil
         focusedField = nil
         appModel.selectSceneForEditing(index)
+        requestSelectedSceneScroll(animated: animatedScroll)
         if autoplayNarration {
             appModel.previewCurrentSceneNarration()
         }
         // Resign first responder so keyboard focus leaves any text view (e.g. annotation).
         if let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0 is NSPanel }) {
             window.makeFirstResponder(nil)
+        }
+    }
+
+    private func requestSelectedSceneScroll(animated: Bool) {
+        animateNextScroll = animated
+        scrollRequestRevision = UUID()
+    }
+
+    private func scrollSelectedScene(using proxy: ScrollViewProxy, animated: Bool) {
+        guard workingChapter.scenes.indices.contains(selectedIndex) else { return }
+        let sceneID = workingChapter.scenes[selectedIndex].id
+        if animated {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                proxy.scrollTo(sceneID, anchor: .center)
+            }
+        } else {
+            proxy.scrollTo(sceneID, anchor: .center)
         }
     }
 }
