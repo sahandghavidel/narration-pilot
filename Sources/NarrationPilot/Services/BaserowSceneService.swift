@@ -104,6 +104,7 @@ final class BaserowSceneService {
         tableID: String,
         part: String? = nil,
         scriptID: Int? = nil,
+        scriptIDs: [Int]? = nil,
         sceneNumber: Int? = nil
     ) async throws {
         let code = scene.code
@@ -118,7 +119,8 @@ final class BaserowSceneService {
             "Code Instruction": code?.instruction ?? ""
         ]
         if let part, !part.isEmpty { fields["Part"] = part }
-        if let scriptID { fields["Script"] = [scriptID] }
+        if let scriptIDs { fields["Script"] = scriptIDs }
+        else if let scriptID { fields["Script"] = [scriptID] }
         _ = try await request(
             baseURL: baseURL,
             path: "/api/database/rows/table/\(clean(tableID))/\(rowID)/",
@@ -186,6 +188,7 @@ final class BaserowSceneService {
         code: NarrationCode?,
         part: String?,
         scriptID: Int,
+        scriptIDs: [Int]? = nil,
         baseURL: String,
         token: String,
         tableID: String
@@ -199,7 +202,7 @@ final class BaserowSceneService {
             "Language": code?.language ?? "",
             "Target File": code?.targetFile ?? "",
             "Code Instruction": code?.instruction ?? "",
-            "Script": [scriptID]
+            "Script": scriptIDs ?? [scriptID]
         ]
         if let part, !part.isEmpty { fields["Part"] = part }
         let result = try await request(

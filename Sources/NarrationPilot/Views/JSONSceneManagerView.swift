@@ -246,6 +246,15 @@ struct JSONSceneManagerView: View {
                     }
                     .disabled(hasUnsavedChanges || isAddingScene || isDeletingScene || isTransformingScene || appModel.isBaserowSyncing)
                     .help(hasUnsavedChanges ? "Save or undo the current edit before deleting this scene." : "Delete this scene from Baserow")
+                    Button("Undo \(appModel.baserowUndoActionName ?? "Last Action")") {
+                        undoLastBaserowOperation()
+                    }
+                    .disabled(
+                        appModel.baserowUndoActionName == nil || hasUnsavedChanges || isAddingScene ||
+                        isDeletingScene || isTransformingScene || appModel.isBaserowSyncing ||
+                        appModel.isUndoingBaserowOperation
+                    )
+                    .help("Restore the script to its state before the last Baserow operation")
                 }
                 Spacer()
                 Button("Previous") { select(max(selectedIndex - 1, 0)) }
@@ -340,6 +349,12 @@ struct JSONSceneManagerView: View {
         Task {
             await appModel.separateBaserowScene(sceneID: scene.id)
             isTransformingScene = false
+        }
+    }
+
+    private func undoLastBaserowOperation() {
+        Task {
+            await appModel.undoLastBaserowOperation()
         }
     }
 

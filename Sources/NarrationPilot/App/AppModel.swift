@@ -48,6 +48,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var isBaserowSyncing = false
     @Published private(set) var baserowScripts: [BaserowScriptRecord] = []
     @Published private(set) var baserowPartOptions: [String] = []
+    @Published private(set) var baserowUndoActionName: String?
+    @Published private(set) var isUndoingBaserowOperation = false
     @Published private(set) var isSceneManagerNarrationQueuePlaying = false
     @Published private(set) var sceneManagerNarrationSceneID: String?
 
@@ -826,6 +828,14 @@ final class AppModel: ObservableObject {
     private var baserowRevision = ""
     private var baserowSyncRequested = false
     private var baserowSyncWaiters: [CheckedContinuation<Void, Never>] = []
+    private struct BaserowUndoEntry {
+        let actionName: String
+        let scriptID: Int
+        let before: [BaserowSceneRecord]
+        let expectedAfterSignature: String
+        let preferredSceneNumber: Int
+    }
+    private var baserowUndoEntry: BaserowUndoEntry?
     private var sceneManagerNarrationQueue: [(sceneID: String, narration: String)] = []
 
     /// Notion "last edited" timestamp for a scene ID, when the chapter came from Notion.
@@ -1316,6 +1326,7 @@ final class AppModel: ObservableObject {
     }
 
     func disconnectBaserow() {
+        clearBaserowUndo()
         isBaserowConnected = false
         baserowScripts = []
         baserowPartOptions = []
@@ -1370,6 +1381,7 @@ final class AppModel: ObservableObject {
                 await syncBaserowScenes(force: true)
                 return
             }
+            let undoSnapshot = records.filter { $0.scriptIDs.contains(scriptID) }
 
             statusMessage = "Deleting Scene \(originalSceneNumber) from Baserow…"
             try await baserowSceneService.deleteScene(
@@ -1395,6 +1407,10 @@ final class AppModel: ObservableObject {
             baserowRevision = ""
             currentSceneIndex = min(currentSceneIndex, max((loadedChapter?.scenes.count ?? 1) - 2, 0))
             await syncBaserowScenes(force: true)
+            await registerBaserowUndo(
+                actionName: "Delete Scene", scriptID: scriptID,
+                before: undoSnapshot, preferredSceneNumber: originalSceneNumber
+            )
             statusMessage = "Scene deleted from Baserow. \(scriptSceneProgress)"
         } catch {
             baserowRevision = ""
@@ -1429,6 +1445,7 @@ final class AppModel: ObservableObject {
                 await syncBaserowScenes(force: true)
                 return
             }
+            let undoSnapshot = records.filter { $0.scriptIDs.contains(scriptID) }
 
             statusMessage = "Adding a scene after Scene \(originalSceneNumber)…"
             let laterRecords = records
@@ -1460,6 +1477,10 @@ final class AppModel: ObservableObject {
                let index = loadedChapter?.scenes.firstIndex(where: { $0.id == "baserow-row-\(createdRowID)" }) {
                 currentSceneIndex = index
             }
+            await registerBaserowUndo(
+                actionName: "Add Scene", scriptID: scriptID,
+                before: undoSnapshot, preferredSceneNumber: originalSceneNumber
+            )
             statusMessage = "Empty scene added. \(scriptSceneProgress)"
         } catch {
             if createdRowID == nil {
@@ -1500,6 +1521,7 @@ final class AppModel: ObservableObject {
             let scriptRecords = records
                 .filter { $0.scriptIDs.contains(scriptID) }
                 .sorted { $0.originalSceneNumber < $1.originalSceneNumber }
+            let undoSnapshot = scriptRecords
             guard let currentIndex = scriptRecords.firstIndex(where: { $0.rowID == rowID }),
                   scriptRecords.indices.contains(currentIndex + 1) else {
                 statusMessage = "There is no next scene to combine."
@@ -1551,6 +1573,10 @@ final class AppModel: ObservableObject {
 
             baserowRevision = ""
             await syncBaserowScenes(force: true)
+            await registerBaserowUndo(
+                actionName: "Combine Scenes", scriptID: scriptID,
+                before: undoSnapshot, preferredSceneNumber: current.originalSceneNumber
+            )
             statusMessage = "Scenes combined. \(scriptSceneProgress)"
         } catch {
             for record in renumberedRecords.reversed() {
@@ -1603,6 +1629,7 @@ final class AppModel: ObservableObject {
                 await syncBaserowScenes(force: true)
                 return
             }
+            let undoSnapshot = records.filter { $0.scriptIDs.contains(scriptID) }
             originalRecord = original
             let sentences = ScriptSceneSplitter.scenes(from: original.scene.narration)
             guard sentences.count >= 2 else {
@@ -1648,6 +1675,10 @@ final class AppModel: ObservableObject {
 
             baserowRevision = ""
             await syncBaserowScenes(force: true)
+            await registerBaserowUndo(
+                actionName: "Separate Scene", scriptID: scriptID,
+                before: undoSnapshot, preferredSceneNumber: original.originalSceneNumber
+            )
             statusMessage = "Scene separated into \(sentences.count) scenes. \(scriptSceneProgress)"
         } catch {
             for createdRowID in createdRowIDs {
@@ -1684,6 +1715,118 @@ final class AppModel: ObservableObject {
     private static func joinOptionalSceneText(_ first: String?, _ second: String?) -> String? {
         let result = joinSceneText(first ?? "", second ?? "", separator: "\n")
         return result.isEmpty ? nil : result
+    }
+
+    func undoLastBaserowOperation() async {
+        guard let entry = baserowUndoEntry, !isUndoingBaserowOperation else { return }
+        isUndoingBaserowOperation = true
+        defer { isUndoingBaserowOperation = false }
+        stopSceneManagerNarrationQueue()
+
+        do {
+            let allRecords = try await baserowSceneService.fetchScenes(
+                baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+            )
+            let current = allRecords.filter { $0.scriptIDs.contains(entry.scriptID) }
+            guard Self.baserowUndoSignature(current) == entry.expectedAfterSignature else {
+                clearBaserowUndo()
+                statusMessage = "Undo is unavailable because this script changed after \(entry.actionName)."
+                return
+            }
+
+            statusMessage = "Undoing \(entry.actionName)…"
+            try await restoreBaserowScript(from: current, to: entry.before, scriptID: entry.scriptID)
+            clearBaserowUndo()
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            if let index = loadedChapter?.scenes.firstIndex(where: {
+                baserowOriginalSceneNumbersBySceneID[$0.id] == entry.preferredSceneNumber
+            }) {
+                currentSceneIndex = index
+            }
+            statusMessage = "\(entry.actionName) undone. \(scriptSceneProgress)"
+        } catch {
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            statusMessage = "Baserow undo failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
+    }
+
+    private func registerBaserowUndo(
+        actionName: String,
+        scriptID: Int,
+        before: [BaserowSceneRecord],
+        preferredSceneNumber: Int
+    ) async {
+        guard let allRecords = try? await baserowSceneService.fetchScenes(
+            baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+        ) else {
+            clearBaserowUndo()
+            return
+        }
+        let after = allRecords.filter { $0.scriptIDs.contains(scriptID) }
+        baserowUndoEntry = BaserowUndoEntry(
+            actionName: actionName,
+            scriptID: scriptID,
+            before: before,
+            expectedAfterSignature: Self.baserowUndoSignature(after),
+            preferredSceneNumber: preferredSceneNumber
+        )
+        baserowUndoActionName = actionName
+    }
+
+    private func clearBaserowUndo() {
+        baserowUndoEntry = nil
+        baserowUndoActionName = nil
+    }
+
+    private func restoreBaserowScript(
+        from current: [BaserowSceneRecord],
+        to target: [BaserowSceneRecord],
+        scriptID: Int
+    ) async throws {
+        let targetIDs = Set(target.map(\.rowID))
+        for record in current where !targetIDs.contains(record.rowID) {
+            try await baserowSceneService.deleteScene(
+                rowID: record.rowID, baseURL: baserowBaseURL,
+                token: baserowToken, tableID: baserowTableID
+            )
+        }
+
+        let currentIDs = Set(current.map(\.rowID))
+        for record in target.sorted(by: { $0.originalSceneNumber < $1.originalSceneNumber }) {
+            if currentIDs.contains(record.rowID) {
+                try await baserowSceneService.updateScene(
+                    record.scene, rowID: record.rowID, baseURL: baserowBaseURL,
+                    token: baserowToken, tableID: baserowTableID,
+                    part: record.part, scriptIDs: record.scriptIDs,
+                    sceneNumber: record.originalSceneNumber
+                )
+            } else {
+                _ = try await baserowSceneService.createScene(
+                    sceneNumber: record.originalSceneNumber,
+                    narration: record.scene.narration, onScreen: record.scene.onScreen,
+                    annotation: record.scene.annotation, code: record.scene.code,
+                    part: record.part, scriptID: record.scriptIDs.first ?? scriptID,
+                    scriptIDs: record.scriptIDs,
+                    baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+                )
+            }
+        }
+    }
+
+    private static func baserowUndoSignature(_ records: [BaserowSceneRecord]) -> String {
+        records.sorted { $0.rowID < $1.rowID }.map { record in
+            let code = record.scene.code
+            return [
+                String(record.rowID), String(record.originalSceneNumber),
+                String(reflecting: record.part), record.scriptIDs.sorted().map(String.init).joined(separator: ","),
+                String(reflecting: record.scene.narration), String(reflecting: record.scene.onScreen),
+                String(reflecting: record.scene.annotation), String(reflecting: code?.text),
+                String(reflecting: code?.language), String(reflecting: code?.targetFile),
+                String(reflecting: code?.instruction)
+            ].joined(separator: "|")
+        }.joined(separator: "\n")
     }
 
     private func syncBaserowScenes(force: Bool) async {
