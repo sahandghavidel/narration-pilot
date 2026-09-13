@@ -48,6 +48,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var isBaserowSyncing = false
     @Published private(set) var baserowScripts: [BaserowScriptRecord] = []
     @Published private(set) var baserowPartOptions: [String] = []
+    @Published private(set) var isSceneManagerNarrationQueuePlaying = false
+    @Published private(set) var sceneManagerNarrationSceneID: String?
 
     @Published var recordingCueSoundsEnabled: Bool {
         didSet { defaults.set(recordingCueSoundsEnabled, forKey: Self.recordingCueSoundsEnabledKey) }
@@ -824,6 +826,7 @@ final class AppModel: ObservableObject {
     private var baserowRevision = ""
     private var baserowSyncRequested = false
     private var baserowSyncWaiters: [CheckedContinuation<Void, Never>] = []
+    private var sceneManagerNarrationQueue: [(sceneID: String, narration: String)] = []
 
     /// Notion "last edited" timestamp for a scene ID, when the chapter came from Notion.
     func notionLastEdited(forSceneID sceneID: String) -> Date? {
@@ -1329,6 +1332,7 @@ final class AppModel: ObservableObject {
 
     func selectBaserowScript(_ scriptID: Int) {
         guard baserowSelectedScriptID != scriptID else { return }
+        stopSceneManagerNarrationQueue()
         baserowSelectedScriptID = scriptID
         currentSceneIndex = 0
         Task { await syncBaserowScenes(force: true) }
@@ -1336,6 +1340,7 @@ final class AppModel: ObservableObject {
 
     func selectBaserowPart(_ part: String) {
         guard baserowPartFilter != part else { return }
+        stopSceneManagerNarrationQueue()
         baserowPartFilter = part
         currentSceneIndex = 0
         Task { await syncBaserowScenes(force: true) }
@@ -2233,6 +2238,7 @@ final class AppModel: ObservableObject {
     }
 
     func previewCurrentSceneNarration() {
+        cancelSceneManagerNarrationQueue(stopSpeech: false)
         guard let narration = currentNarrationScene?.narration
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !narration.isEmpty else {
@@ -2248,6 +2254,56 @@ final class AppModel: ObservableObject {
             speedMultiplier: speedMultiplier,
             voiceIdentifier: selectedVoiceIdentifier
         )
+    }
+
+    func playSceneManagerNarrations(_ scenes: [NarrationScene]) {
+        let queue = scenes.compactMap { scene -> (sceneID: String, narration: String)? in
+            let narration = scene.narration.trimmingCharacters(in: .whitespacesAndNewlines)
+            return narration.isEmpty ? nil : (scene.id, narration)
+        }
+        guard !queue.isEmpty else {
+            statusMessage = "There are no narrations to play in this selection."
+            return
+        }
+
+        stopReading()
+        sceneManagerNarrationQueue = queue
+        isSceneManagerNarrationQueuePlaying = true
+        playNextSceneManagerNarration()
+    }
+
+    func stopSceneManagerNarrationQueue() {
+        cancelSceneManagerNarrationQueue(stopSpeech: true)
+        statusMessage = SpeechState.idle.label
+    }
+
+    private func playNextSceneManagerNarration() {
+        guard isSceneManagerNarrationQueuePlaying,
+              !sceneManagerNarrationQueue.isEmpty else {
+            cancelSceneManagerNarrationQueue(stopSpeech: false)
+            statusMessage = "Finished playing the selected narrations."
+            return
+        }
+
+        let next = sceneManagerNarrationQueue.removeFirst()
+        sceneManagerNarrationSceneID = next.sceneID
+        statusMessage = "Playing narration (sceneManagerNarrationQueue.count + 1) remaining…"
+        ttsManager.speak(
+            text: next.narration,
+            speedMultiplier: speedMultiplier,
+            voiceIdentifier: selectedVoiceIdentifier
+        )
+    }
+
+    private func cancelSceneManagerNarrationQueue(stopSpeech: Bool) {
+        let wasPlaying = isSceneManagerNarrationQueuePlaying
+        sceneManagerNarrationQueue = []
+        sceneManagerNarrationSceneID = nil
+        isSceneManagerNarrationQueuePlaying = false
+        if stopSpeech, wasPlaying,
+           speechState == .speaking || speechState == .paused || speechState == .stopping {
+            ttsManager.stop()
+        }
     }
 
     func refreshScriptScenes() {
@@ -2567,6 +2623,7 @@ final class AppModel: ObservableObject {
         waitsForUserInactivity: Bool = false,
         speedMultiplier: Double? = nil
     ) {
+        cancelSceneManagerNarrationQueue(stopSpeech: false)
         refreshScriptScenes()
 
         guard let scene = currentSceneText else {
@@ -2613,6 +2670,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopReading() {
+        cancelSceneManagerNarrationQueue(stopSpeech: false)
         shouldAdvanceScriptSceneAfterSpeech = false
         cancelPendingReadSequence()
         let wasIdle = speechState == .idle
@@ -2920,6 +2978,10 @@ final class AppModel: ObservableObject {
     }
 
     private func handleCompletedSpeech() {
+        if isSceneManagerNarrationQueuePlaying {
+            playNextSceneManagerNarration()
+            return
+        }
         performExternalTriggerActionAfterCompletedSpeechIfNeeded()
     }
 

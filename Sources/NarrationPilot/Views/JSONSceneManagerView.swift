@@ -71,6 +71,20 @@ struct JSONSceneManagerView: View {
                 applySourceChapter(updatedChapter)
             }
         }
+        .onReceive(appModel.$sceneManagerNarrationSceneID) { sceneID in
+            guard let sceneID,
+                  let index = workingChapter.scenes.firstIndex(where: { $0.id == sceneID }) else { return }
+            selectedIndex = index
+            loadDraft()
+            activeField = nil
+            focusedField = nil
+            appModel.selectSceneForEditing(index)
+        }
+        .onDisappear {
+            if appModel.isSceneManagerNarrationQueuePlaying {
+                appModel.stopSceneManagerNarrationQueue()
+            }
+        }
         .background(
             SceneArrowKeyMonitor { direction in
                 navigate(direction)
@@ -263,16 +277,31 @@ struct JSONSceneManagerView: View {
             }
             .disabled(appModel.isBaserowSyncing || isAddingScene || isDeletingScene || isTransformingScene)
 
-            Picker("Part", selection: Binding(
-                get: { appModel.baserowPartFilter },
-                set: { appModel.selectBaserowPart($0) }
-            )) {
-                Text("All parts").tag("")
-                ForEach(appModel.baserowPartOptions, id: \.self) { part in
-                    Text(part).tag(part)
+            HStack(spacing: 7) {
+                Picker("Part", selection: Binding(
+                    get: { appModel.baserowPartFilter },
+                    set: { appModel.selectBaserowPart($0) }
+                )) {
+                    Text("All parts").tag("")
+                    ForEach(appModel.baserowPartOptions, id: \.self) { part in
+                        Text(part).tag(part)
+                    }
                 }
+                .disabled(appModel.isBaserowSyncing || isAddingScene || isDeletingScene || isTransformingScene)
+
+                Button {
+                    toggleNarrationQueue()
+                } label: {
+                    Image(systemName: appModel.isSceneManagerNarrationQueuePlaying ? "stop.fill" : "play.fill")
+                }
+                .help(appModel.isSceneManagerNarrationQueuePlaying ? "Stop narration playback" : "Play all narrations in the selected part")
+                .disabled(
+                    hasUnsavedChanges || appModel.isBaserowSyncing || isAddingScene ||
+                    isDeletingScene || isTransformingScene || workingChapter.scenes.allSatisfy {
+                        $0.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                )
             }
-            .disabled(appModel.isBaserowSyncing || isAddingScene || isDeletingScene || isTransformingScene)
 
             if appModel.isBaserowSyncing {
                 ProgressView("Refreshing Baserow scenes…")
@@ -311,6 +340,14 @@ struct JSONSceneManagerView: View {
         Task {
             await appModel.separateBaserowScene(sceneID: scene.id)
             isTransformingScene = false
+        }
+    }
+
+    private func toggleNarrationQueue() {
+        if appModel.isSceneManagerNarrationQueuePlaying {
+            appModel.stopSceneManagerNarrationQueue()
+        } else {
+            appModel.playSceneManagerNarrations(workingChapter.scenes)
         }
     }
 
@@ -455,6 +492,9 @@ struct JSONSceneManagerView: View {
     }
 
     private func applySourceChapter(_ updatedChapter: NarrationChapter) {
+        if appModel.isSceneManagerNarrationQueuePlaying {
+            appModel.stopSceneManagerNarrationQueue()
+        }
         let selectedSceneID = workingChapter.scenes.indices.contains(selectedIndex)
             ? workingChapter.scenes[selectedIndex].id
             : nil
