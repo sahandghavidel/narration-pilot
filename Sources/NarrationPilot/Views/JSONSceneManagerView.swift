@@ -22,6 +22,7 @@ struct JSONSceneManagerView: View {
     @State private var pendingSourceChapter: NarrationChapter?
     @State private var isDeletingScene = false
     @State private var isAddingScene = false
+    @State private var isTransformingScene = false
 
     private enum EditableField: Hashable { case narration, onScreen, code }
 
@@ -211,12 +212,25 @@ struct JSONSceneManagerView: View {
                     Button("Add Scene") {
                         addScene(after: workingChapter.scenes[selectedIndex])
                     }
-                    .disabled(hasUnsavedChanges || isAddingScene || isDeletingScene || appModel.isBaserowSyncing)
+                    .disabled(hasUnsavedChanges || isAddingScene || isDeletingScene || isTransformingScene || appModel.isBaserowSyncing)
                     .help(hasUnsavedChanges ? "Save or undo the current edit before adding a scene." : "Add an empty scene after this scene")
+                    Button("Combine Scenes") {
+                        combineSceneWithNext(workingChapter.scenes[selectedIndex])
+                    }
+                    .disabled(
+                        hasUnsavedChanges || selectedIndex >= workingChapter.scenes.count - 1 ||
+                        isAddingScene || isDeletingScene || isTransformingScene || appModel.isBaserowSyncing
+                    )
+                    .help("Combine this scene with the next scene")
+                    Button("Separate Scene") {
+                        separateScene(workingChapter.scenes[selectedIndex])
+                    }
+                    .disabled(hasUnsavedChanges || isAddingScene || isDeletingScene || isTransformingScene || appModel.isBaserowSyncing)
+                    .help("Create one scene for each narration sentence")
                     Button("Delete Scene", role: .destructive) {
                         deleteScene(workingChapter.scenes[selectedIndex])
                     }
-                    .disabled(hasUnsavedChanges || isAddingScene || isDeletingScene || appModel.isBaserowSyncing)
+                    .disabled(hasUnsavedChanges || isAddingScene || isDeletingScene || isTransformingScene || appModel.isBaserowSyncing)
                     .help(hasUnsavedChanges ? "Save or undo the current edit before deleting this scene." : "Delete this scene from Baserow")
                 }
                 Spacer()
@@ -247,7 +261,7 @@ struct JSONSceneManagerView: View {
                     Text(script.title).tag(script.rowID)
                 }
             }
-            .disabled(appModel.isBaserowSyncing || isAddingScene || isDeletingScene)
+            .disabled(appModel.isBaserowSyncing || isAddingScene || isDeletingScene || isTransformingScene)
 
             Picker("Part", selection: Binding(
                 get: { appModel.baserowPartFilter },
@@ -258,7 +272,7 @@ struct JSONSceneManagerView: View {
                     Text(part).tag(part)
                 }
             }
-            .disabled(appModel.isBaserowSyncing || isAddingScene || isDeletingScene)
+            .disabled(appModel.isBaserowSyncing || isAddingScene || isDeletingScene || isTransformingScene)
 
             if appModel.isBaserowSyncing {
                 ProgressView("Refreshing Baserow scenes…")
@@ -281,6 +295,22 @@ struct JSONSceneManagerView: View {
         Task {
             await appModel.addBaserowScene(afterSceneID: scene.id)
             isAddingScene = false
+        }
+    }
+
+    private func combineSceneWithNext(_ scene: NarrationScene) {
+        isTransformingScene = true
+        Task {
+            await appModel.combineBaserowSceneWithNext(sceneID: scene.id)
+            isTransformingScene = false
+        }
+    }
+
+    private func separateScene(_ scene: NarrationScene) {
+        isTransformingScene = true
+        Task {
+            await appModel.separateBaserowScene(sceneID: scene.id)
+            isTransformingScene = false
         }
     }
 

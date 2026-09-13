@@ -164,15 +164,41 @@ final class BaserowSceneService {
         token: String,
         tableID: String
     ) async throws -> Int {
+        try await createScene(
+            sceneNumber: sceneNumber,
+            narration: "",
+            onScreen: "",
+            annotation: nil,
+            code: nil,
+            part: part,
+            scriptID: scriptID,
+            baseURL: baseURL,
+            token: token,
+            tableID: tableID
+        )
+    }
+
+    func createScene(
+        sceneNumber: Int,
+        narration: String,
+        onScreen: String,
+        annotation: String?,
+        code: NarrationCode?,
+        part: String?,
+        scriptID: Int,
+        baseURL: String,
+        token: String,
+        tableID: String
+    ) async throws -> Int {
         var fields: [String: Any] = [
             "Scene Number": sceneNumber,
-            "Narration": "",
-            "On Screen": "",
-            "Annotation": "",
-            "Code": "",
-            "Language": "",
-            "Target File": "",
-            "Code Instruction": "",
+            "Narration": narration,
+            "On Screen": onScreen,
+            "Annotation": annotation ?? "",
+            "Code": code?.text ?? "",
+            "Language": code?.language ?? "",
+            "Target File": code?.targetFile ?? "",
+            "Code Instruction": code?.instruction ?? "",
             "Script": [scriptID]
         ]
         if let part, !part.isEmpty { fields["Part"] = part }

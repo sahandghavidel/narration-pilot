@@ -1474,6 +1474,213 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func combineBaserowSceneWithNext(sceneID: String) async {
+        guard scriptInputFormat == .baserow,
+              let rowID = baserowRowIDsBySceneID[sceneID],
+              let scriptID = baserowScriptIDsBySceneID[sceneID] else {
+            statusMessage = "The selected Baserow scene could not be identified."
+            return
+        }
+        if isBaserowSyncing { await syncBaserowScenes(force: true) }
+
+        var originalRecord: BaserowSceneRecord?
+        var nextRecord: BaserowSceneRecord?
+        var combinedWasSaved = false
+        var nextWasDeleted = false
+        var renumberedRecords: [BaserowSceneRecord] = []
+        do {
+            let records = try await baserowSceneService.fetchScenes(
+                baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+            )
+            let scriptRecords = records
+                .filter { $0.scriptIDs.contains(scriptID) }
+                .sorted { $0.originalSceneNumber < $1.originalSceneNumber }
+            guard let currentIndex = scriptRecords.firstIndex(where: { $0.rowID == rowID }),
+                  scriptRecords.indices.contains(currentIndex + 1) else {
+                statusMessage = "There is no next scene to combine."
+                return
+            }
+            let current = scriptRecords[currentIndex]
+            let next = scriptRecords[currentIndex + 1]
+            originalRecord = current
+            nextRecord = next
+            guard Set(current.scriptIDs) == Set(next.scriptIDs), current.part == next.part else {
+                statusMessage = "Scenes can only be combined when their Script and Part match."
+                return
+            }
+            guard next.scene.code == nil else {
+                statusMessage = "The next scene contains code. Move or remove its code before combining."
+                return
+            }
+
+            let combined = NarrationScene(
+                id: current.scene.id,
+                sceneNumber: current.scene.sceneNumber,
+                narration: Self.joinSceneText(current.scene.narration, next.scene.narration, separator: " "),
+                onScreen: Self.joinSceneText(current.scene.onScreen, next.scene.onScreen, separator: "\n"),
+                code: current.scene.code,
+                annotation: Self.joinOptionalSceneText(current.scene.annotation, next.scene.annotation)
+            )
+            statusMessage = "Combining Scenes \(current.originalSceneNumber) and \(next.originalSceneNumber)…"
+            try await baserowSceneService.updateScene(
+                combined, rowID: current.rowID, baseURL: baserowBaseURL,
+                token: baserowToken, tableID: baserowTableID,
+                part: current.part, scriptID: scriptID, sceneNumber: current.originalSceneNumber
+            )
+            combinedWasSaved = true
+            try await baserowSceneService.deleteScene(
+                rowID: next.rowID, baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+            )
+            nextWasDeleted = true
+
+            let laterRecords = scriptRecords
+                .filter { $0.originalSceneNumber > next.originalSceneNumber }
+                .sorted { $0.originalSceneNumber < $1.originalSceneNumber }
+            for record in laterRecords {
+                try await baserowSceneService.updateSceneNumber(
+                    rowID: record.rowID, sceneNumber: record.originalSceneNumber - 1,
+                    baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+                )
+                renumberedRecords.append(record)
+            }
+
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            statusMessage = "Scenes combined. \(scriptSceneProgress)"
+        } catch {
+            for record in renumberedRecords.reversed() {
+                try? await baserowSceneService.updateSceneNumber(
+                    rowID: record.rowID, sceneNumber: record.originalSceneNumber,
+                    baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+                )
+            }
+            if nextWasDeleted, let next = nextRecord {
+                _ = try? await baserowSceneService.createScene(
+                    sceneNumber: next.originalSceneNumber,
+                    narration: next.scene.narration, onScreen: next.scene.onScreen,
+                    annotation: next.scene.annotation, code: next.scene.code,
+                    part: next.part, scriptID: scriptID,
+                    baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+                )
+            }
+            if combinedWasSaved, let original = originalRecord {
+                try? await baserowSceneService.updateScene(
+                    original.scene, rowID: original.rowID, baseURL: baserowBaseURL,
+                    token: baserowToken, tableID: baserowTableID,
+                    part: original.part, scriptID: scriptID, sceneNumber: original.originalSceneNumber
+                )
+            }
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            statusMessage = "Baserow combine failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
+    }
+
+    func separateBaserowScene(sceneID: String) async {
+        guard scriptInputFormat == .baserow,
+              let rowID = baserowRowIDsBySceneID[sceneID],
+              let scriptID = baserowScriptIDsBySceneID[sceneID] else {
+            statusMessage = "The selected Baserow scene could not be identified."
+            return
+        }
+        if isBaserowSyncing { await syncBaserowScenes(force: true) }
+
+        var originalRecord: BaserowSceneRecord?
+        var renumberedRecords: [BaserowSceneRecord] = []
+        var createdRowIDs: [Int] = []
+        var originalWasSaved = false
+        do {
+            let records = try await baserowSceneService.fetchScenes(
+                baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+            )
+            guard let original = records.first(where: { $0.rowID == rowID && $0.scriptIDs.contains(scriptID) }) else {
+                statusMessage = "That Baserow scene no longer exists. Refreshing scenes…"
+                await syncBaserowScenes(force: true)
+                return
+            }
+            originalRecord = original
+            let sentences = ScriptSceneSplitter.scenes(from: original.scene.narration)
+            guard sentences.count >= 2 else {
+                statusMessage = "This narration contains only one sentence."
+                return
+            }
+
+            statusMessage = "Separating Scene \(original.originalSceneNumber) into \(sentences.count) scenes…"
+            let shift = sentences.count - 1
+            let laterRecords = records
+                .filter { $0.scriptIDs.contains(scriptID) && $0.originalSceneNumber > original.originalSceneNumber }
+                .sorted { $0.originalSceneNumber > $1.originalSceneNumber }
+            for record in laterRecords {
+                try await baserowSceneService.updateSceneNumber(
+                    rowID: record.rowID, sceneNumber: record.originalSceneNumber + shift,
+                    baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+                )
+                renumberedRecords.append(record)
+            }
+
+            let firstScene = NarrationScene(
+                id: original.scene.id, sceneNumber: original.scene.sceneNumber,
+                narration: sentences[0], onScreen: original.scene.onScreen,
+                code: original.scene.code, annotation: original.scene.annotation
+            )
+            try await baserowSceneService.updateScene(
+                firstScene, rowID: original.rowID, baseURL: baserowBaseURL,
+                token: baserowToken, tableID: baserowTableID,
+                part: original.part, scriptID: scriptID, sceneNumber: original.originalSceneNumber
+            )
+            originalWasSaved = true
+
+            for (offset, sentence) in sentences.dropFirst().enumerated() {
+                let createdRowID = try await baserowSceneService.createScene(
+                    sceneNumber: original.originalSceneNumber + offset + 1,
+                    narration: sentence, onScreen: original.scene.onScreen,
+                    annotation: original.scene.annotation, code: nil,
+                    part: original.part, scriptID: scriptID,
+                    baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+                )
+                createdRowIDs.append(createdRowID)
+            }
+
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            statusMessage = "Scene separated into \(sentences.count) scenes. \(scriptSceneProgress)"
+        } catch {
+            for createdRowID in createdRowIDs {
+                try? await baserowSceneService.deleteScene(
+                    rowID: createdRowID, baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+                )
+            }
+            if originalWasSaved, let original = originalRecord {
+                try? await baserowSceneService.updateScene(
+                    original.scene, rowID: original.rowID, baseURL: baserowBaseURL,
+                    token: baserowToken, tableID: baserowTableID,
+                    part: original.part, scriptID: scriptID, sceneNumber: original.originalSceneNumber
+                )
+            }
+            for record in renumberedRecords.reversed() {
+                try? await baserowSceneService.updateSceneNumber(
+                    rowID: record.rowID, sceneNumber: record.originalSceneNumber,
+                    baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+                )
+            }
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            statusMessage = "Baserow separation failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
+    }
+
+    private static func joinSceneText(_ first: String, _ second: String, separator: String) -> String {
+        [first, second]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: separator)
+    }
+
+    private static func joinOptionalSceneText(_ first: String?, _ second: String?) -> String? {
+        let result = joinSceneText(first ?? "", second ?? "", separator: "\n")
+        return result.isEmpty ? nil : result
+    }
+
     private func syncBaserowScenes(force: Bool) async {
         guard hasBaserowConfiguration else { return }
         if isBaserowSyncing {
