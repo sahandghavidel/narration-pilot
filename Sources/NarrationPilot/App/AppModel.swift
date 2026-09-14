@@ -1422,6 +1422,88 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func deleteSelectedBaserowPart() async {
+        let scriptID = baserowSelectedScriptID
+        let part = baserowPartFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard scriptInputFormat == .baserow, scriptID != 0, !part.isEmpty else {
+            statusMessage = "Select a specific Baserow Part before deleting it."
+            return
+        }
+
+        stopSceneManagerNarrationQueue()
+        if isBaserowSyncing {
+            await syncBaserowScenes(force: true)
+        }
+
+        var undoSnapshot: [BaserowSceneRecord] = []
+        do {
+            let records = try await baserowSceneService.fetchScenes(
+                baseURL: baserowBaseURL,
+                token: baserowToken,
+                tableID: baserowTableID
+            )
+            let scriptRecords = records
+                .filter { $0.scriptIDs.contains(scriptID) }
+                .sorted { $0.originalSceneNumber < $1.originalSceneNumber }
+            let recordsToDelete = scriptRecords.filter { $0.part == part }
+            guard let preferredSceneNumber = recordsToDelete.first?.originalSceneNumber else {
+                statusMessage = "No scenes remain in \(part). Refreshing scenes…"
+                await syncBaserowScenes(force: true)
+                return
+            }
+            undoSnapshot = scriptRecords
+
+            statusMessage = "Deleting all \(recordsToDelete.count) scenes in \(part)…"
+            for record in recordsToDelete {
+                try await baserowSceneService.deleteScene(
+                    rowID: record.rowID,
+                    baseURL: baserowBaseURL,
+                    token: baserowToken,
+                    tableID: baserowTableID
+                )
+            }
+
+            let deletedRowIDs = Set(recordsToDelete.map(\.rowID))
+            let remainingRecords = scriptRecords.filter { !deletedRowIDs.contains($0.rowID) }
+            for (index, record) in remainingRecords.enumerated()
+            where record.originalSceneNumber != index + 1 {
+                try await baserowSceneService.updateSceneNumber(
+                    rowID: record.rowID,
+                    sceneNumber: index + 1,
+                    baseURL: baserowBaseURL,
+                    token: baserowToken,
+                    tableID: baserowTableID
+                )
+            }
+
+            baserowRevision = ""
+            currentSceneIndex = min(preferredSceneNumber - 1, max(remainingRecords.count - 1, 0))
+            await syncBaserowScenes(force: true)
+            requestSceneManagerSelection(at: currentSceneIndex)
+            await registerBaserowUndo(
+                actionName: "Delete \(part)",
+                scriptID: scriptID,
+                before: undoSnapshot,
+                preferredSceneNumber: preferredSceneNumber
+            )
+            statusMessage = "\(part) deleted from Baserow. \(scriptSceneProgress)"
+        } catch {
+            if !undoSnapshot.isEmpty,
+               let currentRecords = try? await baserowSceneService.fetchScenes(
+                   baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID
+               ) {
+                try? await restoreBaserowScript(
+                    from: currentRecords.filter { $0.scriptIDs.contains(scriptID) },
+                    to: undoSnapshot,
+                    scriptID: scriptID
+                )
+            }
+            baserowRevision = ""
+            await syncBaserowScenes(force: true)
+            statusMessage = "Baserow Part delete failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
+    }
+
     func addBaserowScene(afterSceneID sceneID: String) async {
         guard scriptInputFormat == .baserow,
               let originalSceneNumber = baserowOriginalSceneNumbersBySceneID[sceneID],

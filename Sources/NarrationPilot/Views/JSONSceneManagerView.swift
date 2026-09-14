@@ -323,6 +323,17 @@ struct JSONSceneManagerView: View {
                 }
                 .help("Copy chapter and script name")
                 .disabled(chapterScriptClipboardText == nil)
+
+                Button(role: .destructive) {
+                    confirmDeleteSelectedPart()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .help("Delete all scenes in the selected part")
+                .disabled(
+                    chapterScriptClipboardText == nil || hasUnsavedChanges || appModel.isBaserowSyncing ||
+                    isAddingScene || isDeletingScene || isTransformingScene
+                )
             }
 
             if appModel.isBaserowSyncing {
@@ -401,6 +412,28 @@ struct JSONSceneManagerView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         appModel.statusMessage = "Copied “\(text)”."
+    }
+
+    private func confirmDeleteSelectedPart() {
+        guard let scriptTitle = appModel.baserowScripts.first(where: {
+            $0.rowID == appModel.baserowSelectedScriptID
+        })?.title else { return }
+        let part = appModel.baserowPartFilter
+        guard !part.isEmpty else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Delete all of \(part)?"
+        alert.informativeText = "This will delete all \(workingChapter.scenes.count) scenes in \(part) from “\(scriptTitle)”. You can restore them with Undo until another Baserow operation is performed."
+        alert.addButton(withTitle: "Delete \(part)")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        isDeletingScene = true
+        Task {
+            await appModel.deleteSelectedBaserowPart()
+            isDeletingScene = false
+        }
     }
 
     @ViewBuilder
