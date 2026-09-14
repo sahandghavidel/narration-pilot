@@ -25,6 +25,17 @@ struct JSONSceneManagerView: View {
     @State private var isTransformingScene = false
     @State private var scrollRequestRevision = UUID()
     @State private var animateNextScroll = false
+    @State private var sidebarWidth: CGFloat = {
+        guard let saved = UserDefaults.standard.object(forKey: "NarrationPilot.jsonManagerSidebarWidth") as? Double else {
+            return 260
+        }
+        return saved
+    }()
+    @State private var sidebarDragStartWidth: CGFloat?
+
+    private static let minimumSidebarWidth: CGFloat = 220
+    private static let minimumDetailAreaWidth: CGFloat = 456
+    private static let sidebarChromeWidth: CGFloat = 33
 
     private enum EditableField: Hashable { case narration, onScreen, code }
 
@@ -37,17 +48,19 @@ struct JSONSceneManagerView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            sceneList
-                .frame(width: 260)
-                .padding(.vertical, 14)
-                .padding(.leading, 14)
-                .padding(.trailing, 10)
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                sceneList
+                    .frame(width: Self.clampedSidebarWidth(sidebarWidth, availableWidth: geometry.size.width))
+                    .padding(.vertical, 14)
+                    .padding(.leading, 14)
+                    .padding(.trailing, 10)
 
-            Divider()
+                sidebarDivider(availableWidth: geometry.size.width)
 
-            sceneDetails
-                .padding(18)
+                sceneDetails
+                    .padding(18)
+            }
         }
         .toolbar {
             ToolbarItemGroup {
@@ -93,6 +106,54 @@ struct JSONSceneManagerView: View {
                 navigate(direction)
             }
         )
+    }
+
+    static func clampedSidebarWidth(_ proposedWidth: CGFloat, availableWidth: CGFloat) -> CGFloat {
+        let maximumWidth = max(minimumSidebarWidth, availableWidth - minimumDetailAreaWidth - sidebarChromeWidth)
+        return min(max(proposedWidth, minimumSidebarWidth), maximumWidth)
+    }
+
+    private func sidebarDivider(availableWidth: CGFloat) -> some View {
+        ZStack {
+            Rectangle()
+                .fill(.clear)
+            Divider()
+                .frame(width: 1)
+        }
+        .frame(width: 9)
+        .contentShape(Rectangle())
+        .onHover { isHovering in
+            if isHovering {
+                NSCursor.resizeLeftRight.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let startWidth = sidebarDragStartWidth
+                        ?? Self.clampedSidebarWidth(sidebarWidth, availableWidth: availableWidth)
+                    if sidebarDragStartWidth == nil {
+                        sidebarDragStartWidth = startWidth
+                    }
+                    sidebarWidth = Self.clampedSidebarWidth(
+                        startWidth + value.translation.width,
+                        availableWidth: availableWidth
+                    )
+                }
+                .onEnded { value in
+                    let startWidth = sidebarDragStartWidth
+                        ?? Self.clampedSidebarWidth(sidebarWidth, availableWidth: availableWidth)
+                    sidebarWidth = Self.clampedSidebarWidth(
+                        startWidth + value.translation.width,
+                        availableWidth: availableWidth
+                    )
+                    sidebarDragStartWidth = nil
+                    UserDefaults.standard.set(Double(sidebarWidth), forKey: "NarrationPilot.jsonManagerSidebarWidth")
+                }
+        )
+        .help("Drag to resize the chapter list")
     }
 
     /// Moves scene selection by arrow key. ⌘-modified arrows work even while typing.

@@ -175,6 +175,12 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertNil(JSONSceneManagerView.chapterScriptClipboardText(part: "Chapter 1", scriptTitle: nil))
     }
 
+    func testJSONSceneManagerSidebarWidthStaysWithinUsableBounds() {
+        XCTAssertEqual(JSONSceneManagerView.clampedSidebarWidth(100, availableWidth: 960), 220)
+        XCTAssertEqual(JSONSceneManagerView.clampedSidebarWidth(320, availableWidth: 960), 320)
+        XCTAssertEqual(JSONSceneManagerView.clampedSidebarWidth(700, availableWidth: 960), 471)
+    }
+
     func testScriptSceneSplitterSplitsSentences() {
         let scenes = ScriptSceneSplitter.scenes(from: "First step. Now click the button! Done?")
         XCTAssertEqual(scenes, ["First step.", "Now click the button!", "Done?"])
