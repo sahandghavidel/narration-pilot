@@ -315,6 +315,14 @@ struct JSONSceneManagerView: View {
                         $0.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     }
                 )
+
+                Button {
+                    copyChapterAndScriptName()
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .help("Copy chapter and script name")
+                .disabled(chapterScriptClipboardText == nil)
             }
 
             if appModel.isBaserowSyncing {
@@ -369,6 +377,30 @@ struct JSONSceneManagerView: View {
         } else {
             appModel.playSceneManagerNarrations(workingChapter.scenes)
         }
+    }
+
+    private var chapterScriptClipboardText: String? {
+        let scriptTitle = appModel.baserowScripts.first {
+            $0.rowID == appModel.baserowSelectedScriptID
+        }?.title
+        return Self.chapterScriptClipboardText(
+            part: appModel.baserowPartFilter,
+            scriptTitle: scriptTitle
+        )
+    }
+
+    static func chapterScriptClipboardText(part: String, scriptTitle: String?) -> String? {
+        let part = part.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scriptTitle = scriptTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !part.isEmpty, !scriptTitle.isEmpty else { return nil }
+        return "\(part) - \(scriptTitle)"
+    }
+
+    private func copyChapterAndScriptName() {
+        guard let text = chapterScriptClipboardText else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        appModel.statusMessage = "Copied “\(text)”."
     }
 
     @ViewBuilder

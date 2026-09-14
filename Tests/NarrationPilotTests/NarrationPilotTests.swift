@@ -160,6 +160,21 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertEqual(service.normalize("   hello world\n"), "hello world")
     }
 
+    func testChapterScriptClipboardTextUsesSelectedPartAndScriptTitle() {
+        XCTAssertEqual(
+            JSONSceneManagerView.chapterScriptClipboardText(
+                part: "Chapter 2",
+                scriptTitle: "JavaScript Local Storage Explained"
+            ),
+            "Chapter 2 - JavaScript Local Storage Explained"
+        )
+    }
+
+    func testChapterScriptClipboardTextRequiresSpecificPartAndScriptTitle() {
+        XCTAssertNil(JSONSceneManagerView.chapterScriptClipboardText(part: "", scriptTitle: "A Script"))
+        XCTAssertNil(JSONSceneManagerView.chapterScriptClipboardText(part: "Chapter 1", scriptTitle: nil))
+    }
+
     func testScriptSceneSplitterSplitsSentences() {
         let scenes = ScriptSceneSplitter.scenes(from: "First step. Now click the button! Done?")
         XCTAssertEqual(scenes, ["First step.", "Now click the button!", "Done?"])
