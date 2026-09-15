@@ -19,14 +19,13 @@ final class SceneEditorController: NSObject, NSWindowDelegate {
 
     var isVisible: Bool { panel?.isVisible == true }
 
-    func show() {
+    func show(activatesApp: Bool = true) {
         guard let appModel else {
             return
         }
 
         if let panel, panel.isVisible {
-            NSApp.activate(ignoringOtherApps: true)
-            panel.makeKeyAndOrderFront(nil)
+            present(panel, activatesApp: activatesApp)
             return
         }
 
@@ -41,8 +40,16 @@ final class SceneEditorController: NSObject, NSWindowDelegate {
         }
         self.panel = panel
         panel.center()
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        present(panel, activatesApp: activatesApp)
+    }
+
+    private func present(_ panel: NSPanel, activatesApp: Bool) {
+        if activatesApp {
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
+        } else {
+            panel.orderFrontRegardless()
+        }
     }
 
     func toggle() {

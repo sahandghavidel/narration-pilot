@@ -2394,15 +2394,18 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 await self.syncBaserowScenes(force: true)
                 self.refreshScriptScenes()
-                self.sceneEditorController?.show()
+                self.sceneEditorController?.show(activatesApp: false)
             }
         } else if scriptInputFormat == .json, hasNotionConfiguration {
             Task { [weak self] in
                 guard let self else { return }
                 await self.syncNotionScenes(force: true)
                 self.refreshScriptScenes()
-                self.sceneEditorController?.show()
+                self.sceneEditorController?.show(activatesApp: false)
             }
+        } else if scriptInputFormat.usesStructuredScenes {
+            refreshScriptScenes()
+            sceneEditorController?.show(activatesApp: false)
         } else {
             refreshScriptScenes()
             sceneEditorController?.toggle()
