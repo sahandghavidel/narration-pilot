@@ -1,4 +1,5 @@
 import AVFoundation
+import AppKit
 import Combine
 import Foundation
 import KeyboardShortcuts
@@ -579,6 +580,11 @@ final class AppModel: ObservableObject {
 
     var currentSceneOnScreenSummary: String? {
         currentNarrationScene?.onScreen
+    }
+
+    var currentSceneCodeSummary: String? {
+        guard let scene = currentNarrationScene else { return nil }
+        return JSONSceneReplayFormatter.codeText(for: scene)
     }
 
     var allSceneTexts: [String] {
@@ -2755,6 +2761,55 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func replayCurrentCodeOnly() {
+        guard scriptModeEnabled, scriptInputFormat.usesStructuredScenes,
+              let scene = currentNarrationScene else {
+            statusMessage = "Load a Chapter JSON scene first."
+            return
+        }
+        guard let codeText = JSONSceneReplayFormatter.codeText(for: scene) else {
+            let message = "The current scene has no code."
+            shouldAdvanceScriptSceneAfterSpeech = false
+            beginReadSequence(
+                actionBefore: .none,
+                actionAfter: .none,
+                delayBefore: 0,
+                delayAfter: 0,
+                waitsForNeonSpotlight: false,
+                waitsForUserInactivity: false,
+                readingStatus: message
+            ) { [weak self] in
+                guard let self else { return }
+                self.ttsManager.speak(
+                    text: message,
+                    speedMultiplier: self.speedMultiplier,
+                    voiceIdentifier: self.selectedVoiceIdentifier
+                )
+            }
+            return
+        }
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(codeText, forType: .string)
+        shouldAdvanceScriptSceneAfterSpeech = false
+        beginReadSequence(
+            actionBefore: .none,
+            actionAfter: .none,
+            delayBefore: 0,
+            delayAfter: 0,
+            waitsForNeonSpotlight: false,
+            waitsForUserInactivity: false,
+            readingStatus: "Copied and reading code for \(scriptSceneProgress)…"
+        ) { [weak self] in
+            guard let self else { return }
+            self.ttsManager.speak(
+                text: codeText,
+                speedMultiplier: self.speedMultiplier,
+                voiceIdentifier: self.selectedVoiceIdentifier
+            )
+        }
+    }
+
     private func readClipboardNow(
         actionBefore: ExternalTriggerAction,
         actionAfter: ExternalTriggerAction,
@@ -3452,6 +3507,12 @@ final class AppModel: ObservableObject {
         KeyboardShortcuts.onKeyUp(for: .replayOnScreenOnly) { [weak self] in
             Task { @MainActor in
                 self?.replayCurrentOnScreenOnly()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .replayCodeOnly) { [weak self] in
+            Task { @MainActor in
+                self?.replayCurrentCodeOnly()
             }
         }
 

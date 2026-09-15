@@ -557,6 +557,7 @@ struct MenuBarView: View {
                         KeyboardShortcuts.Recorder("Pause / Resume", name: .pauseResumeReading)
                         KeyboardShortcuts.Recorder("Replay Scene", name: .replayScriptScene)
                         KeyboardShortcuts.Recorder("Replay On Screen Only", name: .replayOnScreenOnly)
+                        KeyboardShortcuts.Recorder("Replay Code Only", name: .replayCodeOnly)
                         KeyboardShortcuts.Recorder("Previous Scene", name: .previousScriptScene)
                         KeyboardShortcuts.Recorder("Next Scene", name: .nextScriptScene)
                         KeyboardShortcuts.Recorder("Restart Script", name: .restartScript)

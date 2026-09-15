@@ -53,6 +53,28 @@ struct PresenterOverlayView: View {
                         .lineLimit(2)
                 }
 
+                if let code = appModel.currentSceneCodeSummary {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("CODE")
+                            .font(.caption2.bold())
+                            .foregroundStyle(appModel.presenterOverlaySecondaryTextColor.opacity(appModel.presenterOverlaySecondaryTextOpacity))
+                        Text(code)
+                            .font(.system(
+                                size: CGFloat(appModel.presenterOverlaySideFontSize),
+                                design: .monospaced
+                            ))
+                            .foregroundStyle(appModel.presenterOverlayCurrentTextColor.opacity(appModel.presenterOverlayCurrentTextOpacity))
+                            .lineLimit(3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(.black.opacity(0.24))
+                    )
+                }
+
                 Text(appModel.currentSceneText ?? "Paste a script and turn on Script mode.")
                     .font(.system(size: CGFloat(appModel.presenterOverlayCurrentFontSize), weight: .semibold))
                     .foregroundStyle(appModel.presenterOverlayCurrentTextColor.opacity(appModel.presenterOverlayCurrentTextOpacity))

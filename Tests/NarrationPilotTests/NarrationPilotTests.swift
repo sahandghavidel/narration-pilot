@@ -276,6 +276,41 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertEqual(JSONSceneReplayFormatter.spokenText(for: scene), "Explain it.\nOn screen: Show it.")
     }
 
+    func testJSONSceneReplayCodePreservesExactFormatting() {
+        let code = NarrationCode(
+            text: "  const answer = 42;\nconsole.log(answer);\n",
+            language: "javascript",
+            targetFile: "app.js",
+            action: .replace
+        )
+        let scene = NarrationScene(
+            id: "scene-01", sceneNumber: 1, narration: "Explain it.",
+            onScreen: "Show it.", code: code
+        )
+
+        XCTAssertEqual(
+            JSONSceneReplayFormatter.codeText(for: scene),
+            "  const answer = 42;\nconsole.log(answer);\n"
+        )
+    }
+
+    func testJSONSceneReplayCodeRejectsMissingOrBlankCode() {
+        let sceneWithoutCode = NarrationScene(
+            id: "scene-01", sceneNumber: 1, narration: "Explain it.",
+            onScreen: "Show it.", code: nil
+        )
+        let blankCode = NarrationCode(
+            text: "  \n", language: "javascript", targetFile: "app.js", action: .replace
+        )
+        let sceneWithBlankCode = NarrationScene(
+            id: "scene-02", sceneNumber: 2, narration: "Explain it.",
+            onScreen: "Show it.", code: blankCode
+        )
+
+        XCTAssertNil(JSONSceneReplayFormatter.codeText(for: sceneWithoutCode))
+        XCTAssertNil(JSONSceneReplayFormatter.codeText(for: sceneWithBlankCode))
+    }
+
     func testPauseResumeLabel() {
         XCTAssertEqual(SpeechState.speaking.pauseResumeTitle, "Pause Reading")
         XCTAssertEqual(SpeechState.paused.pauseResumeTitle, "Resume Reading")
