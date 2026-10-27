@@ -563,6 +563,7 @@ struct MenuBarView: View {
                         KeyboardShortcuts.Recorder("Restart Script", name: .restartScript)
                         KeyboardShortcuts.Recorder("Toggle Overlay", name: .togglePresenterOverlay)
                         KeyboardShortcuts.Recorder("Edit Current Scene", name: .editCurrentScene)
+                        KeyboardShortcuts.Recorder("Open, Focus & Play", name: .openFocusAndPlaySceneManager)
                     }
                     .padding(.top, 6)
                 }

@@ -73,6 +73,8 @@ extension KeyboardShortcuts.Name {
         default: KeyboardShortcuts.Shortcut(.e, modifiers: [.command, .option])
     )
 
+    static let openFocusAndPlaySceneManager = Self("openFocusAndPlaySceneManager")
+
     static let ensureFocuSeeRecording = Self("ensureFocuSeeRecording")
 
     static let ensureFocuSeePaused = Self("ensureFocuSeePaused")

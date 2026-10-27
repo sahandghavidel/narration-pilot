@@ -2412,6 +2412,46 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func openFocusAndPlaySceneManager() {
+        if !scriptModeEnabled {
+            scriptModeEnabled = true
+        }
+
+        guard scriptInputFormat.usesStructuredScenes else {
+            statusMessage = "Open, Focus & Play is available for the JSON Scene Manager."
+            return
+        }
+
+        let presentAndPlay = { [weak self] in
+            guard let self else { return }
+            self.refreshScriptScenes()
+            guard self.loadedChapter?.scenes.isEmpty == false else {
+                self.statusMessage = "There are no scenes to play in this selection."
+                return
+            }
+            self.sceneEditorController?.show()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .sceneEditorShouldPlayFromFirstScene, object: nil)
+            }
+        }
+
+        if scriptInputFormat == .baserow, hasBaserowConfiguration {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.syncBaserowScenes(force: true)
+                presentAndPlay()
+            }
+        } else if scriptInputFormat == .json, hasNotionConfiguration {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.syncNotionScenes(force: true)
+                presentAndPlay()
+            }
+        } else {
+            presentAndPlay()
+        }
+    }
+
     func saveCurrentSceneEdit(_ editedText: String) {
         let replacement = editedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !replacement.isEmpty else {
@@ -3546,6 +3586,12 @@ final class AppModel: ObservableObject {
         KeyboardShortcuts.onKeyUp(for: .editCurrentScene) { [weak self] in
             Task { @MainActor in
                 self?.toggleCurrentSceneEditor()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .openFocusAndPlaySceneManager) { [weak self] in
+            Task { @MainActor in
+                self?.openFocusAndPlaySceneManager()
             }
         }
 

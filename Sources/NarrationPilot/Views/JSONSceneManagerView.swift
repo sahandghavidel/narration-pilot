@@ -8,6 +8,7 @@ struct JSONSceneManagerView: View {
     let initialIndex: Int
     let close: () -> Void
 
+    @StateObject private var audioExporter = NarrationAudioExporter()
     @State private var selectedIndex: Int
     @State private var workingChapter: NarrationChapter
     @State private var narration = ""
@@ -77,6 +78,9 @@ struct JSONSceneManagerView: View {
         .onReceive(NotificationCenter.default.publisher(for: .sceneEditorShouldClose)) { _ in
             if commitEdits() { close() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .sceneEditorShouldPlayFromFirstScene)) { _ in
+            playFromFirstScene()
+        }
         .onReceive(appModel.$loadedChapter) { updatedChapter in
             guard let updatedChapter, updatedChapter != workingChapter else { return }
             if hasUnsavedChanges {
@@ -97,6 +101,7 @@ struct JSONSceneManagerView: View {
             applySelection(index, autoplayNarration: false, animatedScroll: false)
         }
         .onDisappear {
+            if audioExporter.isExporting { audioExporter.cancel() }
             if appModel.isSceneManagerNarrationQueuePlaying {
                 appModel.stopSceneManagerNarrationQueue()
             }
@@ -199,6 +204,9 @@ struct JSONSceneManagerView: View {
                         ForEach(displayedSceneIndices, id: \.self) { index in
                             let scene = workingChapter.scenes[index]
                             Button {
+                                if appModel.isSceneManagerNarrationQueuePlaying {
+                                    appModel.stopSceneManagerNarrationQueue()
+                                }
                                 applySelection(index, autoplayNarration: false, animatedScroll: true)
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -369,13 +377,30 @@ struct JSONSceneManagerView: View {
                 } label: {
                     Image(systemName: appModel.isSceneManagerNarrationQueuePlaying ? "stop.fill" : "play.fill")
                 }
-                .help(appModel.isSceneManagerNarrationQueuePlaying ? "Stop narration playback" : "Play all narrations in the selected part")
+                .help(appModel.isSceneManagerNarrationQueuePlaying ? "Stop narration playback" : "Play from the selected scene to the end of this part")
                 .disabled(
                     hasUnsavedChanges || appModel.isBaserowSyncing || isAddingScene ||
-                    isDeletingScene || isTransformingScene || workingChapter.scenes.allSatisfy {
+                    isDeletingScene || isTransformingScene || scenesFromSelection.allSatisfy {
                         $0.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     }
                 )
+
+                Button {
+                    appModel.stopSceneManagerNarrationQueue()
+                    audioExporter.save(
+                        texts: workingChapter.scenes.map(\.narration),
+                        speed: appModel.speedMultiplier,
+                        voiceIdentifier: appModel.selectedVoiceIdentifier,
+                        filename: audioExportName
+                    )
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .accessibilityLabel("Save Audio")
+                .help("Save audio for the entire selected part (AIFF)")
+                .disabled(hasUnsavedChanges || appModel.isBaserowSyncing || isAddingScene ||
+                          isDeletingScene || isTransformingScene || audioExporter.isExporting ||
+                          NarrationAudioExporter.spokenSegments(workingChapter.scenes.map(\.narration)).isEmpty)
 
                 Button {
                     copyChapterAndScriptName()
@@ -397,12 +422,44 @@ struct JSONSceneManagerView: View {
                 )
             }
 
+            Text("\(workingChapter.scenes.count) scenes · Estimated audio: ~\(estimatedAudioDuration)")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .help("Approximate spoken duration of the whole selected part at the current speed. Voice, punctuation, and pronunciation can change the actual duration.")
+
+            if audioExporter.isExporting {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Generating audio…").font(.caption)
+                    Button("Cancel") { audioExporter.cancel() }
+                }
+            } else if !audioExporter.message.isEmpty {
+                Text(audioExporter.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
             if appModel.isBaserowSyncing {
                 ProgressView("Refreshing Baserow scenes…")
                     .controlSize(.small)
                     .font(.caption)
             }
         }
+    }
+
+    private var estimatedAudioDuration: String {
+        NarrationAudioExporter.durationLabel(NarrationAudioExporter.estimatedDuration(
+            texts: workingChapter.scenes.map(\.narration), speed: appModel.speedMultiplier
+        ))
+    }
+
+    private var audioExportName: String {
+        let title = appModel.baserowScripts.first {
+            $0.rowID == appModel.baserowSelectedScriptID
+        }?.title ?? workingChapter.chapterTitle
+        let part = appModel.baserowPartFilter.isEmpty ? "All parts" : appModel.baserowPartFilter
+        return "\(title) - \(part)"
     }
 
     private func deleteScene(_ scene: NarrationScene) {
@@ -447,8 +504,30 @@ struct JSONSceneManagerView: View {
         if appModel.isSceneManagerNarrationQueuePlaying {
             appModel.stopSceneManagerNarrationQueue()
         } else {
-            appModel.playSceneManagerNarrations(workingChapter.scenes)
+            appModel.playSceneManagerNarrations(scenesFromSelection)
         }
+    }
+
+    private var scenesFromSelection: [NarrationScene] {
+        guard workingChapter.scenes.indices.contains(selectedIndex) else { return [] }
+        return Array(workingChapter.scenes[selectedIndex...])
+    }
+
+    private func playFromFirstScene() {
+        guard !hasUnsavedChanges else {
+            appModel.statusMessage = "Save the current scene edit before starting chapter playback."
+            return
+        }
+        guard !workingChapter.scenes.isEmpty else {
+            appModel.statusMessage = "There are no scenes to play in this selection."
+            return
+        }
+
+        if appModel.isSceneManagerNarrationQueuePlaying {
+            appModel.stopSceneManagerNarrationQueue()
+        }
+        applySelection(0, autoplayNarration: false, animatedScroll: true)
+        appModel.playSceneManagerNarrations(workingChapter.scenes)
     }
 
     private var chapterScriptClipboardText: String? {

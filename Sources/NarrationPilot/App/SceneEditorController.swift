@@ -3,6 +3,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let sceneEditorShouldClose = Notification.Name("NarrationPilot.sceneEditorShouldClose")
+    static let sceneEditorShouldPlayFromFirstScene = Notification.Name("NarrationPilot.sceneEditorShouldPlayFromFirstScene")
 }
 
 @MainActor
@@ -73,6 +74,8 @@ final class SceneEditorController: NSObject, NSWindowDelegate {
         guard let window = notification.object as? NSWindow,
               window === panel,
               window.title == "JSON Scene Manager",
+              window.attachedSheet == nil,
+              NSApp.modalWindow == nil,
               !isFinishingClose else {
             return
         }
