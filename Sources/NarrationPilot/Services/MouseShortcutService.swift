@@ -2,12 +2,14 @@
 import Foundation
 
 enum MouseShortcutAction: String, CaseIterable, Identifiable {
-    case none, read, replay, onScreen, code, previous, next, restart, stop, pauseResume, overlay, openSceneManager, openFocusAndPlay, toggleRecording
+    case none, read, replay, onScreen, code, previous, next, restart, stop, pauseResume, overlay, openSceneManager, openFocusAndPlay, toggleRecording, clipboardAlwaysOne, clipboardAlwaysTwo
     var id: String { rawValue }
     var title: String {
         switch self {
         case .none: "None"
         case .read: "Read Current Input"
+        case .clipboardAlwaysOne: "Read Clipboard Always 1"
+        case .clipboardAlwaysTwo: "Read Clipboard Always 2"
         case .replay: "Replay Scene"
         case .onScreen: "Replay On Screen Only"
         case .code: "Replay Code Only"

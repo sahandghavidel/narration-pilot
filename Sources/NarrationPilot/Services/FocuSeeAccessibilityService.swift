@@ -72,6 +72,15 @@ struct FocuSeeAccessibilityService {
         if allLabels.contains("please select the recording mode") {
             return .notRecording
         }
+        let hasEditorWindow = elements.contains {
+            $0.role == kAXWindowRole as String && $0.labels.contains { normalize($0) == "edit" }
+        }
+        let hasExportAction = actionableElements.contains {
+            $0.labels.contains { normalize($0) == "export" }
+        }
+        if hasEditorWindow && hasExportAction {
+            return .notRecording
+        }
 
         let hasDisabledRecordingControl = elements.contains { element in
             guard !element.isEnabled, actionableRoles.contains(element.role) else {

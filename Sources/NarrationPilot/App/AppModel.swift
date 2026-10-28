@@ -1177,6 +1177,31 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func readClipboardAlwaysOne() {
+        guard sceneReviewActionsAllowed else { return }
+        self.readClipboardAlways(
+            actionBefore: self.readClipboardAlwaysActionBefore,
+            actionAfter: self.readClipboardAlwaysActionAfter,
+            delayBefore: self.readClipboardAlwaysDelayBefore,
+            delayAfter: self.readClipboardAlwaysDelayAfter,
+            waitsForNeonSpotlight: self.readClipboardAlwaysWaitsForNeonSpotlight,
+            waitsForUserInactivity: self.readClipboardAlwaysWaitsForUserInactivity,
+            speedMultiplier: self.readClipboardAlwaysSpeedMultiplier
+        )
+    }
+
+    func readClipboardAlwaysTwo() {
+        self.readClipboardAlways(
+            actionBefore: self.readClipboardAlwaysTwoActionBefore,
+            actionAfter: self.readClipboardAlwaysTwoActionAfter,
+            delayBefore: self.readClipboardAlwaysTwoDelayBefore,
+            delayAfter: self.readClipboardAlwaysTwoDelayAfter,
+            waitsForNeonSpotlight: self.readClipboardAlwaysTwoWaitsForNeonSpotlight,
+            waitsForUserInactivity: self.readClipboardAlwaysTwoWaitsForUserInactivity,
+            speedMultiplier: self.readClipboardAlwaysTwoSpeedMultiplier
+        )
+    }
+
     func readClipboardAlways(
         actionBefore: ExternalTriggerAction = .none,
         actionAfter: ExternalTriggerAction = .none,
@@ -3479,6 +3504,10 @@ final class AppModel: ObservableObject {
                     waitsForNeonSpotlight: self.readShortcutOneWaitsForNeonSpotlight,
                     waitsForUserInactivity: self.readShortcutOneWaitsForUserInactivity,
                     speedMultiplier: self.readShortcutOneSpeedMultiplier)
+            case .clipboardAlwaysOne:
+                self.readClipboardAlwaysOne()
+            case .clipboardAlwaysTwo:
+                self.readClipboardAlwaysTwo()
             case .replay:
                 self.replayCurrentScriptScene()
             case .onScreen:
@@ -3553,15 +3582,7 @@ final class AppModel: ObservableObject {
                     return
                 }
 
-                self.readClipboardAlways(
-                    actionBefore: self.readClipboardAlwaysActionBefore,
-                    actionAfter: self.readClipboardAlwaysActionAfter,
-                    delayBefore: self.readClipboardAlwaysDelayBefore,
-                    delayAfter: self.readClipboardAlwaysDelayAfter,
-                    waitsForNeonSpotlight: self.readClipboardAlwaysWaitsForNeonSpotlight,
-                    waitsForUserInactivity: self.readClipboardAlwaysWaitsForUserInactivity,
-                    speedMultiplier: self.readClipboardAlwaysSpeedMultiplier
-                )
+                self.readClipboardAlwaysOne()
             }
         }
 
@@ -3571,15 +3592,7 @@ final class AppModel: ObservableObject {
                     return
                 }
 
-                self.readClipboardAlways(
-                    actionBefore: self.readClipboardAlwaysTwoActionBefore,
-                    actionAfter: self.readClipboardAlwaysTwoActionAfter,
-                    delayBefore: self.readClipboardAlwaysTwoDelayBefore,
-                    delayAfter: self.readClipboardAlwaysTwoDelayAfter,
-                    waitsForNeonSpotlight: self.readClipboardAlwaysTwoWaitsForNeonSpotlight,
-                    waitsForUserInactivity: self.readClipboardAlwaysTwoWaitsForUserInactivity,
-                    speedMultiplier: self.readClipboardAlwaysTwoSpeedMultiplier
-                )
+                self.readClipboardAlwaysTwo()
             }
         }
 

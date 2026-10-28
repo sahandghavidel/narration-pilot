@@ -190,3 +190,5 @@ Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
 Narration Pilot is open source under the [MIT License](LICENSE).
 
 While FocuSee is recording, scene replay (including on-screen and code), scene navigation, script restart, and opening the Scene Manager are silently ignored. The same actions are blocked when FocuSee is open but its recording state cannot be determined. Pausing recording makes them available again.
+
+Mouse action menus include Read Clipboard Always 1 and Read Clipboard Always 2, each using its existing speed and recording settings. Clipboard Always 1 is silently blocked during recording or an unknown FocuSee state, for both keyboard and mouse triggers. Clipboard Always 2 remains available.

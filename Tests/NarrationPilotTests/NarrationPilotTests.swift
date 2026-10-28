@@ -17,6 +17,14 @@ final class NarrationPilotTests: XCTestCase {
         let recording = FocuSeeAccessibilityElementSnapshot(role: "AXButton", labels: ["Pause recording"], isEnabled: true)
         XCTAssertEqual(FocuSeeAccessibilityService.classify(isRunning: true, elements: [home, recording]), .recording)
     }
+
+    func testFocuSeeEditorAllowsSceneReviewUnlessRecordingControlsArePresent() {
+        let window = FocuSeeAccessibilityElementSnapshot(role: "AXWindow", labels: ["edit"], isEnabled: true)
+        let export = FocuSeeAccessibilityElementSnapshot(role: "AXButton", labels: ["Export"], isEnabled: true)
+        let pause = FocuSeeAccessibilityElementSnapshot(role: "AXButton", labels: ["Pause recording"], isEnabled: true)
+        XCTAssertEqual(FocuSeeAccessibilityService.classify(isRunning: true, elements: [window, export]), .notRecording)
+        XCTAssertEqual(FocuSeeAccessibilityService.classify(isRunning: true, elements: [window, export, pause]), .recording)
+    }
     func testNotionSceneServiceTreatsEmptyNarrationAndOnScreenAsBlank() {
         XCTAssertTrue(NotionSceneService.isBlankScene(narration: "", onScreen: ""))
         XCTAssertTrue(NotionSceneService.isBlankScene(narration: "  \n", onScreen: "\t"))
