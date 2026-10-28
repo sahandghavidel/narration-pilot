@@ -3,12 +3,18 @@ import Foundation
 
 @MainActor
 final class MouseShortcutService {
+    enum Action {
+        case read, replay, onScreen, openSceneManager
+    }
+
+    private static let middleHoldThreshold: TimeInterval = 0.6
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var held = Set<Int64>()
-    private let action: (Int64) -> Void
+    private var middlePressedAt: TimeInterval?
+    private let action: (Action) -> Void
 
-    init(action: @escaping (Int64) -> Void) { self.action = action }
+    init(action: @escaping (Action) -> Void) { self.action = action }
 
     func start() {
         guard tap == nil else { return }
@@ -20,6 +26,7 @@ final class MouseShortcutService {
                 let service = Unmanaged<MouseShortcutService>.fromOpaque(context).takeUnretainedValue()
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     service.held.removeAll()
+                    service.middlePressedAt = nil
                     if let tap = service.tap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return Unmanaged.passUnretained(event)
                 }
@@ -43,7 +50,7 @@ final class MouseShortcutService {
             guard raw == 105 || raw == 107 else { return false }
             button = raw == 105 ? 3 : 4
         } else {
-            guard raw == 3 || raw == 4 else { return false }
+            guard raw == 2 || raw == 3 || raw == 4 else { return false }
             button = raw
         }
         let identity = keyboard ? raw + 1000 : raw
@@ -53,9 +60,21 @@ final class MouseShortcutService {
             let modifiers: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
             guard event.flags.intersection(modifiers).isEmpty else { return false }
             held.insert(identity)
-            DispatchQueue.main.async { [action] in action(button) }
+            if !keyboard && button == 2 {
+                middlePressedAt = ProcessInfo.processInfo.systemUptime
+            } else {
+                let resolvedAction: Action = button == 4 ? .read : .replay
+                DispatchQueue.main.async { [action] in action(resolvedAction) }
+            }
             return true
         }
-        return held.remove(identity) != nil
+        guard held.remove(identity) != nil else { return false }
+        if !keyboard && button == 2, let pressedAt = middlePressedAt {
+            middlePressedAt = nil
+            let resolvedAction: Action = ProcessInfo.processInfo.systemUptime - pressedAt >= Self.middleHoldThreshold
+                ? .openSceneManager : .onScreen
+            DispatchQueue.main.async { [action] in action(resolvedAction) }
+        }
+        return true
     }
 }

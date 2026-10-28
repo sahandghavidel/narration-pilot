@@ -87,7 +87,7 @@ want to run the raw SwiftPM executable instead of an application bundle.
 ./scripts/install-local-app.sh
 ```
 
-This installs `Narration Pilot.app` in `~/Applications` and launches it. Upgrades retain the legacy `local.clipboardreadermac` bundle identifier so people upgrading from Clipboard Reader keep their shortcuts and settings.
+This installs Narration Pilot at `/Applications/ClipboardReaderMac.app` and launches it, keeping the existing Applications icon on the current version. Upgrades retain the legacy `local.clipboardreadermac` bundle identifier so people upgrading from Clipboard Reader keep their shortcuts and settings.
 
 > [!NOTE]
 > The raw SwiftPM executable and the installed app use different macOS preferences domains. Use the installed app for normal work when you want one stable set of shortcuts and settings.
@@ -106,7 +106,7 @@ Use **Previous**, **Replay**, **Next**, and **Restart** to navigate. Open **Edit
 
 ### Chapter JSON mode
 
-Turn on **Script mode**, select **Chapter JSON**, and import a version 5 chapter file. Each scene keeps `narration`, one `onScreen` recording instruction, optional structured `code`, an optional `postProduction` note, and an optional AI `annotation`. Speech reads only `narration`; Replay reads narration followed by on-screen direction. The JSON Scene Manager edits and safely saves these fields. Narration Pilot remembers the active chapter after restarting, and changes detected during speech are applied when speech finishes. Versions 2–4 remain readable and are migrated in memory.
+Turn on **Script mode**, select **Chapter JSON**, and import a version 5 chapter file. Each scene keeps `narration`, one `onScreen` recording instruction, optional structured `code`, an optional `postProduction` note, and an optional AI `annotation`. Speech and Replay read only `narration`; Replay On Screen Only reads the instruction separately. The JSON Scene Manager edits and safely saves these fields. Narration Pilot remembers the active chapter after restarting, and changes detected during speech are applied when speech finishes. Versions 2–4 remain readable and are migrated in memory.
 
 Narration Pilot can also receive a JSON file directly:
 
@@ -127,7 +127,7 @@ The overlay shows the previous, current, and next scenes. It supports custom siz
 
 ### Shortcuts and recording triggers
 
-Mouse Button 4 (Back) replays the current scene. Mouse Button 5 (Forward) runs the first current-input shortcut, including its recording actions. F13 and F14 work as alternatives when the mouse buttons are remapped to those keys. These global mouse shortcuts require Accessibility permission. Control-modified side buttons are reserved for Neon Spotlight.
+Mouse Button 4 (Back) replays the current scene. Mouse Button 5 (Forward) runs the first current-input shortcut, including its recording actions. A short middle click reads the on-screen instruction for the current structured scene; holding the middle button for at least 0.6 seconds and releasing it opens the Scene Manager using the Edit Current Scene action. Middle clicks are consumed while Narration Pilot is running. F13 and F14 work as alternatives when the side buttons are remapped to those keys. These global mouse shortcuts require Accessibility permission. Control-modified side buttons are reserved for Neon Spotlight.
 
 Narration Pilot provides two shortcuts for reading the current input and three shortcuts that always read the clipboard. Every read shortcut can use a different speed and choose an external action before and after speech: do nothing, toggle the configured shortcut, ensure FocuSee is recording, or ensure FocuSee is paused. Each action can use an independent 0–10 second delay so recording can settle before speech begins and continue briefly after speech ends. Existing trigger settings migrate to the original toggle behavior.
 

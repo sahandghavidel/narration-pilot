@@ -271,9 +271,10 @@ final class NarrationPilotTests: XCTestCase {
         )
     }
 
-    func testJSONSceneReplayReadsNarrationThenOnScreen() {
+    func testJSONSceneReplayReadsOnlyNarration() {
         let scene = NarrationScene(id: "scene-01", sceneNumber: 1, narration: "Explain it.", onScreen: "Show it.", code: nil)
-        XCTAssertEqual(JSONSceneReplayFormatter.spokenText(for: scene), "Explain it.\nOn screen: Show it.")
+        XCTAssertEqual(JSONSceneReplayFormatter.spokenParts(for: scene), ["Explain it."])
+        XCTAssertEqual(JSONSceneReplayFormatter.spokenText(for: scene), "Explain it.")
     }
 
     func testJSONSceneReplayCodePreservesExactFormatting() {

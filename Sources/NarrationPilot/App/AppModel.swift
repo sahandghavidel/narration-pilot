@@ -3445,9 +3445,10 @@ final class AppModel: ObservableObject {
             mouseShortcutService?.start()
             return
         }
-        mouseShortcutService = MouseShortcutService { [weak self] button in
+        mouseShortcutService = MouseShortcutService { [weak self] action in
             guard let self else { return }
-            if button == 4 {
+            switch action {
+            case .read:
                 self.readNow(actionBefore: self.readShortcutOneActionBefore,
                     actionAfter: self.readShortcutOneActionAfter,
                     delayBefore: self.readShortcutOneDelayBefore,
@@ -3455,8 +3456,12 @@ final class AppModel: ObservableObject {
                     waitsForNeonSpotlight: self.readShortcutOneWaitsForNeonSpotlight,
                     waitsForUserInactivity: self.readShortcutOneWaitsForUserInactivity,
                     speedMultiplier: self.readShortcutOneSpeedMultiplier)
-            } else {
+            case .replay:
                 self.replayCurrentScriptScene()
+            case .onScreen:
+                self.replayCurrentOnScreenOnly()
+            case .openSceneManager:
+                self.toggleCurrentSceneEditor()
             }
         }
         mouseShortcutService?.start()

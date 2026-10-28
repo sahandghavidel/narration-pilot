@@ -3,9 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-APP_ROOT="$HOME/Applications"
-APP_PATH="$APP_ROOT/Narration Pilot.app"
-LEGACY_APP_PATH="$APP_ROOT/ClipboardReaderMac.app"
+APP_ROOT="/Applications"
+# Keep the established Applications icon and bundle path pointing to the current app.
+APP_PATH="$APP_ROOT/ClipboardReaderMac.app"
 
 cd "$REPO_ROOT"
 
@@ -19,10 +19,6 @@ swift build -c release
 BINARY_DIR="$(swift build -c release --show-bin-path)"
 
 mkdir -p "$APP_ROOT"
-if [[ -d "$LEGACY_APP_PATH" && ! -d "$APP_PATH" ]]; then
-    mv "$LEGACY_APP_PATH" "$APP_PATH"
-fi
-
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 cp "$BINARY_DIR/NarrationPilot" "$APP_PATH/Contents/MacOS/NarrationPilot"
 rm -f "$APP_PATH/Contents/MacOS/ClipboardReaderMac"
