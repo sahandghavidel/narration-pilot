@@ -188,3 +188,5 @@ Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
 ## License
 
 Narration Pilot is open source under the [MIT License](LICENSE).
+
+While FocuSee is recording, scene replay (including on-screen and code), scene navigation, script restart, and opening the Scene Manager are silently ignored. The same actions are blocked when FocuSee is open but its recording state cannot be determined. Pausing recording makes them available again.

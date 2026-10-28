@@ -514,6 +514,7 @@ struct JSONSceneManagerView: View {
     }
 
     private func playFromFirstScene() {
+        guard appModel.sceneReviewActionsAllowed else { return }
         guard !hasUnsavedChanges else {
             appModel.statusMessage = "Save the current scene edit before starting chapter playback."
             return
@@ -871,6 +872,7 @@ struct JSONSceneManagerView: View {
     }
 
     private func applySelection(_ index: Int, autoplayNarration: Bool, animatedScroll: Bool) {
+        guard appModel.sceneReviewActionsAllowed else { return }
         guard workingChapter.scenes.indices.contains(index), commitEdits() else { return }
         selectedIndex = index
         loadDraft()

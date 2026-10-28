@@ -2358,7 +2358,12 @@ final class AppModel: ObservableObject {
         reloadChapterFromDisk(url)
     }
 
+    var sceneReviewActionsAllowed: Bool {
+        focuSeeAccessibilityService.recordingState().allowsSceneReview
+    }
+
     func openCurrentSceneEditor() {
+        guard sceneReviewActionsAllowed else { return }
         if !scriptModeEnabled {
             scriptModeEnabled = true
         }
@@ -2367,6 +2372,7 @@ final class AppModel: ObservableObject {
             Task { [weak self] in
                 guard let self else { return }
                 await self.syncBaserowScenes(force: true)
+                guard self.sceneReviewActionsAllowed else { return }
                 self.refreshScriptScenes()
                 self.sceneEditorController?.show()
             }
@@ -2374,6 +2380,7 @@ final class AppModel: ObservableObject {
             Task { [weak self] in
                 guard let self else { return }
                 await self.syncNotionScenes(force: true)
+                guard self.sceneReviewActionsAllowed else { return }
                 self.refreshScriptScenes()
                 self.sceneEditorController?.show()
             }
@@ -2384,6 +2391,7 @@ final class AppModel: ObservableObject {
     }
 
     func toggleCurrentSceneEditor() {
+        guard sceneReviewActionsAllowed else { return }
         if !scriptModeEnabled {
             scriptModeEnabled = true
         }
@@ -2394,6 +2402,7 @@ final class AppModel: ObservableObject {
             Task { [weak self] in
                 guard let self else { return }
                 await self.syncBaserowScenes(force: true)
+                guard self.sceneReviewActionsAllowed else { return }
                 self.refreshScriptScenes()
                 self.sceneEditorController?.show(activatesApp: false)
             }
@@ -2401,6 +2410,7 @@ final class AppModel: ObservableObject {
             Task { [weak self] in
                 guard let self else { return }
                 await self.syncNotionScenes(force: true)
+                guard self.sceneReviewActionsAllowed else { return }
                 self.refreshScriptScenes()
                 self.sceneEditorController?.show(activatesApp: false)
             }
@@ -2414,6 +2424,7 @@ final class AppModel: ObservableObject {
     }
 
     func openFocusAndPlaySceneManager() {
+        guard sceneReviewActionsAllowed else { return }
         if !scriptModeEnabled {
             scriptModeEnabled = true
         }
@@ -2424,14 +2435,15 @@ final class AppModel: ObservableObject {
         }
 
         let presentAndPlay = { [weak self] in
-            guard let self else { return }
+            guard let self, self.sceneReviewActionsAllowed else { return }
             self.refreshScriptScenes()
             guard self.loadedChapter?.scenes.isEmpty == false else {
                 self.statusMessage = "There are no scenes to play in this selection."
                 return
             }
             self.sceneEditorController?.show()
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.sceneReviewActionsAllowed else { return }
                 NotificationCenter.default.post(name: .sceneEditorShouldPlayFromFirstScene, object: nil)
             }
         }
@@ -2519,6 +2531,7 @@ final class AppModel: ObservableObject {
     }
 
     func selectSceneForEditing(_ index: Int) {
+        guard sceneReviewActionsAllowed else { return }
         refreshScriptScenes()
         guard scriptScenes.indices.contains(index) else {
             return
@@ -2530,6 +2543,7 @@ final class AppModel: ObservableObject {
     }
 
     func previewCurrentSceneNarration() {
+        guard sceneReviewActionsAllowed else { return }
         cancelSceneManagerNarrationQueue(stopSpeech: false)
         guard let narration = currentNarrationScene?.narration
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2549,6 +2563,7 @@ final class AppModel: ObservableObject {
     }
 
     func playSceneManagerNarrations(_ scenes: [NarrationScene]) {
+        guard sceneReviewActionsAllowed else { return }
         let queue = scenes.compactMap { scene -> (sceneID: String, narration: String)? in
             let narration = scene.narration.trimmingCharacters(in: .whitespacesAndNewlines)
             return narration.isEmpty ? nil : (scene.id, narration)
@@ -2723,6 +2738,7 @@ final class AppModel: ObservableObject {
     }
 
     func goToPreviousScene() {
+        guard sceneReviewActionsAllowed else { return }
         guard scriptModeEnabled else {
             statusMessage = "Turn on Script mode to use scene controls."
             return
@@ -2740,6 +2756,7 @@ final class AppModel: ObservableObject {
     }
 
     func goToNextScene() {
+        guard sceneReviewActionsAllowed else { return }
         guard scriptModeEnabled else {
             statusMessage = "Turn on Script mode to use scene controls."
             return
@@ -2757,6 +2774,7 @@ final class AppModel: ObservableObject {
     }
 
     func restartScript() {
+        guard sceneReviewActionsAllowed else { return }
         guard scriptModeEnabled else {
             statusMessage = "Turn on Script mode to use scene controls."
             return
@@ -2769,6 +2787,7 @@ final class AppModel: ObservableObject {
     }
 
     func replayCurrentScriptScene() {
+        guard sceneReviewActionsAllowed else { return }
         guard scriptModeEnabled else {
             statusMessage = "Turn on Script mode to use scene controls."
             return
@@ -2781,6 +2800,7 @@ final class AppModel: ObservableObject {
     }
 
     func replayCurrentOnScreenOnly() {
+        guard sceneReviewActionsAllowed else { return }
         guard scriptModeEnabled, scriptInputFormat.usesStructuredScenes,
               let scene = currentNarrationScene else {
             statusMessage = "Load a Chapter JSON scene first."
@@ -2807,6 +2827,7 @@ final class AppModel: ObservableObject {
     }
 
     func replayCurrentCodeOnly() {
+        guard sceneReviewActionsAllowed else { return }
         guard scriptModeEnabled, scriptInputFormat.usesStructuredScenes,
               let scene = currentNarrationScene else {
             statusMessage = "Load a Chapter JSON scene first."

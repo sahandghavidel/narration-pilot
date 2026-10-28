@@ -8,6 +8,13 @@ enum FocuSeeRecordingState: Equatable {
     case recording
     case paused
     case unknown
+
+    var allowsSceneReview: Bool {
+        switch self {
+        case .recording, .unknown: false
+        case .paused, .notRunning, .notRecording: true
+        }
+    }
 }
 
 struct FocuSeeAccessibilityElementSnapshot: Equatable {
@@ -61,6 +68,9 @@ struct FocuSeeAccessibilityService {
         }
         if allLabels.contains(where: recordingStatusLabels.contains) {
             return .recording
+        }
+        if allLabels.contains("please select the recording mode") {
+            return .notRecording
         }
 
         let hasDisabledRecordingControl = elements.contains { element in

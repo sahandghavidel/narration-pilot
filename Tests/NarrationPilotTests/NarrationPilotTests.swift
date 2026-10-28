@@ -3,6 +3,20 @@ import CoreGraphics
 @testable import NarrationPilot
 
 final class NarrationPilotTests: XCTestCase {
+    func testSceneReviewIsBlockedWhileRecordingOrStateIsUnknown() {
+        XCTAssertFalse(FocuSeeRecordingState.recording.allowsSceneReview)
+        XCTAssertFalse(FocuSeeRecordingState.unknown.allowsSceneReview)
+        XCTAssertTrue(FocuSeeRecordingState.paused.allowsSceneReview)
+        XCTAssertTrue(FocuSeeRecordingState.notRunning.allowsSceneReview)
+        XCTAssertTrue(FocuSeeRecordingState.notRecording.allowsSceneReview)
+    }
+
+    func testFocuSeeHomeScreenAllowsSceneReview() {
+        let home = FocuSeeAccessibilityElementSnapshot(role: "AXStaticText", labels: ["Please select the recording mode"], isEnabled: true)
+        XCTAssertEqual(FocuSeeAccessibilityService.classify(isRunning: true, elements: [home]), .notRecording)
+        let recording = FocuSeeAccessibilityElementSnapshot(role: "AXButton", labels: ["Pause recording"], isEnabled: true)
+        XCTAssertEqual(FocuSeeAccessibilityService.classify(isRunning: true, elements: [home, recording]), .recording)
+    }
     func testNotionSceneServiceTreatsEmptyNarrationAndOnScreenAsBlank() {
         XCTAssertTrue(NotionSceneService.isBlankScene(narration: "", onScreen: ""))
         XCTAssertTrue(NotionSceneService.isBlankScene(narration: "  \n", onScreen: "\t"))

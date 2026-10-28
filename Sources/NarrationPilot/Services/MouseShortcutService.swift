@@ -68,6 +68,7 @@ final class MouseShortcutService {
     }
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
+    private var retryTimer: Timer?
     private var held: [Int64: Press] = [:]
     private var pending: [Int64: Pending] = [:]
     private var fnKeyIsDown = false
@@ -81,6 +82,11 @@ final class MouseShortcutService {
     }
 
     func start() {
+        if retryTimer == nil {
+            retryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.refreshListener() }
+            }
+        }
         guard tap == nil else { return }
         let mask = [CGEventType.otherMouseDown, .otherMouseUp, .keyDown, .keyUp, .flagsChanged]
             .reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
@@ -106,6 +112,23 @@ final class MouseShortcutService {
         source = CFMachPortCreateRunLoopSource(nil, tap, 0)
         if let source { CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes) }
         CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
+    private func refreshListener() {
+        if let tap, CFMachPortIsValid(tap) {
+            if !CGEvent.tapIsEnabled(tap: tap) {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+            return
+        }
+        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        source = nil
+        tap = nil
+        held.removeAll()
+        fnKeyIsDown = false
+        pending.values.forEach { $0.work.cancel() }
+        pending.removeAll()
+        start()
     }
 
     func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
