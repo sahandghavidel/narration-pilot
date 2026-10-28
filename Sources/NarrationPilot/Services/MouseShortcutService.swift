@@ -1,20 +1,70 @@
 @preconcurrency import CoreGraphics
 import Foundation
 
+enum MouseShortcutAction: String, CaseIterable, Identifiable {
+    case none, read, replay, onScreen, code, previous, next, restart, stop, pauseResume, overlay, openSceneManager, openFocusAndPlay
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .none: "None"
+        case .read: "Read Current Input"
+        case .replay: "Replay Scene"
+        case .onScreen: "Replay On Screen Only"
+        case .code: "Replay Code Only"
+        case .previous: "Previous Scene"
+        case .next: "Next Scene"
+        case .restart: "Restart Script"
+        case .stop: "Stop Reading"
+        case .pauseResume: "Pause / Resume"
+        case .overlay: "Toggle Overlay"
+        case .openSceneManager: "Open Scene Manager"
+        case .openFocusAndPlay: "Open, Focus & Play"
+        }
+    }
+}
+
+enum MouseShortcutGesture: String, CaseIterable {
+    case backClick, backHold, forwardClick, forwardHold, middleClick, middleHold
+    var key: String { "clipboardReader.mouseShortcut.\(rawValue)" }
+    var defaultAction: MouseShortcutAction {
+        switch self {
+        case .backClick: .replay
+        case .forwardClick: .read
+        case .middleClick: .onScreen
+        case .middleHold: .openSceneManager
+        case .backHold, .forwardHold: .none
+        }
+    }
+    func action(in defaults: UserDefaults) -> MouseShortcutAction {
+        guard let value = defaults.string(forKey: key) else { return defaultAction }
+        return MouseShortcutAction(rawValue: value) ?? defaultAction
+    }
+}
+
+enum MouseShortcutResolution {
+    static let holdThreshold: TimeInterval = 0.6
+    static func action(click: MouseShortcutAction, hold: MouseShortcutAction, duration: TimeInterval) -> MouseShortcutAction {
+        duration >= holdThreshold ? hold : click
+    }
+}
+
 @MainActor
 final class MouseShortcutService {
-    enum Action {
-        case read, replay, onScreen, openSceneManager
+    private struct Press {
+        let started: TimeInterval
+        let click: MouseShortcutAction
+        let hold: MouseShortcutAction
     }
-
-    private static let middleHoldThreshold: TimeInterval = 0.6
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
-    private var held = Set<Int64>()
-    private var middlePressedAt: TimeInterval?
-    private let action: (Action) -> Void
+    private var held: [Int64: Press] = [:]
+    private let defaults: UserDefaults
+    private let action: (MouseShortcutAction) -> Void
 
-    init(action: @escaping (Action) -> Void) { self.action = action }
+    init(defaults: UserDefaults = .standard, action: @escaping (MouseShortcutAction) -> Void) {
+        self.defaults = defaults
+        self.action = action
+    }
 
     func start() {
         guard tap == nil else { return }
@@ -26,7 +76,6 @@ final class MouseShortcutService {
                 let service = Unmanaged<MouseShortcutService>.fromOpaque(context).takeUnretainedValue()
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     service.held.removeAll()
-                    service.middlePressedAt = nil
                     if let tap = service.tap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return Unmanaged.passUnretained(event)
                 }
@@ -56,25 +105,25 @@ final class MouseShortcutService {
         let identity = keyboard ? raw + 1000 : raw
         let down = type == .keyDown || type == .otherMouseDown
         if down {
-            if held.contains(identity) { return true }
+            if held[identity] != nil { return true }
             let modifiers: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
             guard event.flags.intersection(modifiers).isEmpty else { return false }
-            held.insert(identity)
-            if !keyboard && button == 2 {
-                middlePressedAt = ProcessInfo.processInfo.systemUptime
-            } else {
-                let resolvedAction: Action = button == 4 ? .read : .replay
-                DispatchQueue.main.async { [action] in action(resolvedAction) }
+            let gestures: (MouseShortcutGesture, MouseShortcutGesture)
+            switch button {
+            case 2: gestures = (.middleClick, .middleHold)
+            case 3: gestures = (.backClick, .backHold)
+            default: gestures = (.forwardClick, .forwardHold)
             }
+            let click = gestures.0.action(in: defaults)
+            let hold = gestures.1.action(in: defaults)
+            guard click != .none || hold != .none else { return false }
+            held[identity] = Press(started: ProcessInfo.processInfo.systemUptime, click: click, hold: hold)
             return true
         }
-        guard held.remove(identity) != nil else { return false }
-        if !keyboard && button == 2, let pressedAt = middlePressedAt {
-            middlePressedAt = nil
-            let resolvedAction: Action = ProcessInfo.processInfo.systemUptime - pressedAt >= Self.middleHoldThreshold
-                ? .openSceneManager : .onScreen
-            DispatchQueue.main.async { [action] in action(resolvedAction) }
-        }
+        guard let press = held.removeValue(forKey: identity) else { return false }
+        let chosen = MouseShortcutResolution.action(click: press.click, hold: press.hold,
+            duration: ProcessInfo.processInfo.systemUptime - press.started)
+        if chosen != .none { DispatchQueue.main.async { [action] in action(chosen) } }
         return true
     }
 }

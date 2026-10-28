@@ -8,6 +8,12 @@ struct MenuBarView: View {
     @State private var overlaySettingsExpanded = false
     @State private var speechSettingsExpanded = false
     @State private var shortcutSettingsExpanded = false
+    @AppStorage("clipboardReader.mouseShortcut.backClick") private var backClick = MouseShortcutAction.replay.rawValue
+    @AppStorage("clipboardReader.mouseShortcut.backHold") private var backHold = MouseShortcutAction.none.rawValue
+    @AppStorage("clipboardReader.mouseShortcut.forwardClick") private var forwardClick = MouseShortcutAction.read.rawValue
+    @AppStorage("clipboardReader.mouseShortcut.forwardHold") private var forwardHold = MouseShortcutAction.none.rawValue
+    @AppStorage("clipboardReader.mouseShortcut.middleClick") private var middleClick = MouseShortcutAction.onScreen.rawValue
+    @AppStorage("clipboardReader.mouseShortcut.middleHold") private var middleHold = MouseShortcutAction.openSceneManager.rawValue
 
     var body: some View {
         ScrollView(.vertical) {
@@ -564,6 +570,17 @@ struct MenuBarView: View {
                         KeyboardShortcuts.Recorder("Toggle Overlay", name: .togglePresenterOverlay)
                         KeyboardShortcuts.Recorder("Edit Current Scene", name: .editCurrentScene)
                         KeyboardShortcuts.Recorder("Open, Focus & Play", name: .openFocusAndPlaySceneManager)
+                        Divider()
+                        Text("Mouse shortcuts").font(.headline)
+                        mouseShortcutPicker("Back click", selection: $backClick)
+                        mouseShortcutPicker("Back hold", selection: $backHold)
+                        mouseShortcutPicker("Forward click", selection: $forwardClick)
+                        mouseShortcutPicker("Forward hold", selection: $forwardHold)
+                        mouseShortcutPicker("Middle click", selection: $middleClick)
+                        mouseShortcutPicker("Middle hold", selection: $middleHold)
+                        Text("Hold for 0.6 seconds, then release. Read Current Input uses the first read shortcut’s settings. Set both actions to None to pass that button through.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.top, 6)
                 }
@@ -582,6 +599,14 @@ struct MenuBarView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(width: 460, height: 720)
+    }
+
+    private func mouseShortcutPicker(_ label: String, selection: Binding<String>) -> some View {
+        Picker(label, selection: selection) {
+            ForEach(MouseShortcutAction.allCases) { action in
+                Text(action.title).tag(action.rawValue)
+            }
+        }
     }
 
     private func readShortcutSettings(

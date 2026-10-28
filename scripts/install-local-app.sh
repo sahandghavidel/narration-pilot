@@ -4,8 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 APP_ROOT="/Applications"
-# Keep the established Applications icon and bundle path pointing to the current app.
-APP_PATH="$APP_ROOT/ClipboardReaderMac.app"
+APP_PATH="$APP_ROOT/Narration Pilot.app"
 
 cd "$REPO_ROOT"
 

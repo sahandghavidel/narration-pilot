@@ -277,6 +277,26 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertEqual(JSONSceneReplayFormatter.spokenText(for: scene), "Explain it.")
     }
 
+    func testMouseShortcutDefaultsAndSavedActions() {
+        let suite = "MouseShortcutTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(MouseShortcutGesture.backClick.action(in: defaults), .replay)
+        XCTAssertEqual(MouseShortcutGesture.forwardClick.action(in: defaults), .read)
+        XCTAssertEqual(MouseShortcutGesture.middleHold.action(in: defaults), .openSceneManager)
+        XCTAssertEqual(MouseShortcutGesture.backHold.action(in: defaults), .none)
+        defaults.set(MouseShortcutAction.next.rawValue, forKey: MouseShortcutGesture.backHold.key)
+        XCTAssertEqual(MouseShortcutGesture.backHold.action(in: defaults), .next)
+        defaults.set(MouseShortcutAction.none.rawValue, forKey: MouseShortcutGesture.backClick.key)
+        XCTAssertEqual(MouseShortcutGesture.backClick.action(in: defaults), .none)
+    }
+
+    func testMouseShortcutHoldThreshold() {
+        XCTAssertEqual(MouseShortcutResolution.action(click: .replay, hold: .next, duration: 0.59), .replay)
+        XCTAssertEqual(MouseShortcutResolution.action(click: .replay, hold: .next, duration: 0.6), .next)
+        XCTAssertEqual(MouseShortcutResolution.action(click: .replay, hold: .none, duration: 1), .none)
+    }
+
     func testJSONSceneReplayCodePreservesExactFormatting() {
         let code = NarrationCode(
             text: "  const answer = 42;\nconsole.log(answer);\n",

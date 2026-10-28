@@ -3445,9 +3445,11 @@ final class AppModel: ObservableObject {
             mouseShortcutService?.start()
             return
         }
-        mouseShortcutService = MouseShortcutService { [weak self] action in
+        mouseShortcutService = MouseShortcutService(defaults: defaults) { [weak self] action in
             guard let self else { return }
             switch action {
+            case .none:
+                break
             case .read:
                 self.readNow(actionBefore: self.readShortcutOneActionBefore,
                     actionAfter: self.readShortcutOneActionAfter,
@@ -3460,8 +3462,24 @@ final class AppModel: ObservableObject {
                 self.replayCurrentScriptScene()
             case .onScreen:
                 self.replayCurrentOnScreenOnly()
+            case .code:
+                self.replayCurrentCodeOnly()
+            case .previous:
+                self.goToPreviousScene()
+            case .next:
+                self.goToNextScene()
+            case .restart:
+                self.restartScript()
+            case .stop:
+                self.stopReading()
+            case .pauseResume:
+                self.togglePauseResume()
+            case .overlay:
+                self.togglePresenterOverlay()
             case .openSceneManager:
                 self.toggleCurrentSceneEditor()
+            case .openFocusAndPlay:
+                self.openFocusAndPlaySceneManager()
             }
         }
         mouseShortcutService?.start()

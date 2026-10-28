@@ -87,7 +87,7 @@ want to run the raw SwiftPM executable instead of an application bundle.
 ./scripts/install-local-app.sh
 ```
 
-This installs Narration Pilot at `/Applications/ClipboardReaderMac.app` and launches it, keeping the existing Applications icon on the current version. Upgrades retain the legacy `local.clipboardreadermac` bundle identifier so people upgrading from Clipboard Reader keep their shortcuts and settings.
+This installs `/Applications/Narration Pilot.app` and launches it. Upgrades retain the legacy `local.clipboardreadermac` bundle identifier so people upgrading from Clipboard Reader keep their shortcuts and settings.
 
 > [!NOTE]
 > The raw SwiftPM executable and the installed app use different macOS preferences domains. Use the installed app for normal work when you want one stable set of shortcuts and settings.
@@ -127,7 +127,7 @@ The overlay shows the previous, current, and next scenes. It supports custom siz
 
 ### Shortcuts and recording triggers
 
-Mouse Button 4 (Back) replays the current scene. Mouse Button 5 (Forward) runs the first current-input shortcut, including its recording actions. A short middle click reads the on-screen instruction for the current structured scene; holding the middle button for at least 0.6 seconds and releasing it opens the Scene Manager using the Edit Current Scene action. Middle clicks are consumed while Narration Pilot is running. F13 and F14 work as alternatives when the side buttons are remapped to those keys. These global mouse shortcuts require Accessibility permission. Control-modified side buttons are reserved for Neon Spotlight.
+Under **Global shortcuts → Playback and scene shortcuts**, configure separate click and hold actions for Back, Forward, and Middle. Defaults are Back click to replay the scene, Forward click to run the first current-input shortcut (including its recording actions), Middle click to read the on-screen instruction, and Middle hold to open the Scene Manager. Holds last at least 0.6 seconds; actions run on release. Set both actions for a button to None to pass its events through; if Karabiner remaps a side button, the passed event remains F13 or F14. F13 and F14 also support the configured side-button actions. These global mouse shortcuts require Accessibility permission. Control-modified side buttons are reserved for Neon Spotlight.
 
 Narration Pilot provides two shortcuts for reading the current input and three shortcuts that always read the clipboard. Every read shortcut can use a different speed and choose an external action before and after speech: do nothing, toggle the configured shortcut, ensure FocuSee is recording, or ensure FocuSee is paused. Each action can use an independent 0–10 second delay so recording can settle before speech begins and continue briefly after speech ends. Existing trigger settings migrate to the original toggle behavior.
 
