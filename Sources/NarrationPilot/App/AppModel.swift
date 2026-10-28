@@ -3480,6 +3480,10 @@ final class AppModel: ObservableObject {
                 self.toggleCurrentSceneEditor()
             case .openFocusAndPlay:
                 self.openFocusAndPlaySceneManager()
+            case .toggleRecording:
+                if self.triggerRecordingShortcutIfPossible() {
+                    self.statusMessage = "Sent FocuSee pause/continue shortcut."
+                }
             }
         }
         mouseShortcutService?.start()

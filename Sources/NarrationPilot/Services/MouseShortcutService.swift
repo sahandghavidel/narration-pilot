@@ -2,7 +2,7 @@
 import Foundation
 
 enum MouseShortcutAction: String, CaseIterable, Identifiable {
-    case none, read, replay, onScreen, code, previous, next, restart, stop, pauseResume, overlay, openSceneManager, openFocusAndPlay
+    case none, read, replay, onScreen, code, previous, next, restart, stop, pauseResume, overlay, openSceneManager, openFocusAndPlay, toggleRecording
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -19,6 +19,7 @@ enum MouseShortcutAction: String, CaseIterable, Identifiable {
         case .overlay: "Toggle Overlay"
         case .openSceneManager: "Open Scene Manager"
         case .openFocusAndPlay: "Open, Focus & Play"
+        case .toggleRecording: "Toggle FocuSee Recording"
         }
     }
 }
