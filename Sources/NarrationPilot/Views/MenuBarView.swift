@@ -17,6 +17,9 @@ struct MenuBarView: View {
     @AppStorage("clipboardReader.mouseShortcut.middleClick") private var middleClick = MouseShortcutAction.onScreen.rawValue
     @AppStorage("clipboardReader.mouseShortcut.middleHold") private var middleHold = MouseShortcutAction.openSceneManager.rawValue
     @AppStorage("clipboardReader.mouseShortcut.middleDouble") private var middleDouble = MouseShortcutAction.none.rawValue
+    @AppStorage("clipboardReader.mouseShortcut.fnBack") private var fnBack = MouseShortcutAction.none.rawValue
+    @AppStorage("clipboardReader.mouseShortcut.fnForward") private var fnForward = MouseShortcutAction.none.rawValue
+    @AppStorage("clipboardReader.mouseShortcut.fnMiddle") private var fnMiddle = MouseShortcutAction.none.rawValue
 
     var body: some View {
         ScrollView(.vertical) {
@@ -584,6 +587,9 @@ struct MenuBarView: View {
                         mouseShortcutPicker("Middle click", selection: $middleClick)
                         mouseShortcutPicker("Middle double-click", selection: $middleDouble)
                         mouseShortcutPicker("Middle hold", selection: $middleHold)
+                        mouseShortcutPicker("Fn + Back", selection: $fnBack)
+                        mouseShortcutPicker("Fn + Forward", selection: $fnForward)
+                        mouseShortcutPicker("Fn + Middle", selection: $fnMiddle)
                         Text("Hold for 0.6 seconds, then release. When double-click is enabled, a single click waits briefly. Read Current Input uses the first read shortcut’s settings. Set all three actions to None to pass that button through.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)

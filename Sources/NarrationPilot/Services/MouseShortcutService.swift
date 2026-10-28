@@ -26,6 +26,7 @@ enum MouseShortcutAction: String, CaseIterable, Identifiable {
 
 enum MouseShortcutGesture: String, CaseIterable {
     case backClick, backHold, backDouble, forwardClick, forwardHold, forwardDouble, middleClick, middleHold, middleDouble
+    case fnBack, fnForward, fnMiddle
     var key: String { "clipboardReader.mouseShortcut.\(rawValue)" }
     var defaultAction: MouseShortcutAction {
         switch self {
@@ -33,7 +34,7 @@ enum MouseShortcutGesture: String, CaseIterable {
         case .forwardClick: .read
         case .middleClick: .onScreen
         case .middleHold: .openSceneManager
-        case .backHold, .forwardHold, .backDouble, .forwardDouble, .middleDouble: .none
+        case .backHold, .forwardHold, .backDouble, .forwardDouble, .middleDouble, .fnBack, .fnForward, .fnMiddle: .none
         }
     }
     func action(in defaults: UserDefaults) -> MouseShortcutAction {
@@ -57,6 +58,7 @@ final class MouseShortcutService {
         let hold: MouseShortcutAction
         let double: MouseShortcutAction
         let isSecond: Bool
+        let isFn: Bool
     }
     private struct Pending {
         let work: DispatchWorkItem
@@ -68,6 +70,7 @@ final class MouseShortcutService {
     private var source: CFRunLoopSource?
     private var held: [Int64: Press] = [:]
     private var pending: [Int64: Pending] = [:]
+    private var fnKeyIsDown = false
     private static let doubleClickWindow: TimeInterval = 0.3
     private let defaults: UserDefaults
     private let action: (MouseShortcutAction) -> Void
@@ -79,7 +82,7 @@ final class MouseShortcutService {
 
     func start() {
         guard tap == nil else { return }
-        let mask = [CGEventType.otherMouseDown, .otherMouseUp, .keyDown, .keyUp]
+        let mask = [CGEventType.otherMouseDown, .otherMouseUp, .keyDown, .keyUp, .flagsChanged]
             .reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
         let callback: CGEventTapCallBack = { _, type, event, context in
             guard let context else { return Unmanaged.passUnretained(event) }
@@ -87,6 +90,7 @@ final class MouseShortcutService {
                 let service = Unmanaged<MouseShortcutService>.fromOpaque(context).takeUnretainedValue()
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     service.held.removeAll()
+                    service.fnKeyIsDown = false
                     service.pending.values.forEach { $0.work.cancel() }
                     service.pending.removeAll()
                     if let tap = service.tap { CGEvent.tapEnable(tap: tap, enable: true) }
@@ -105,12 +109,18 @@ final class MouseShortcutService {
     }
 
     func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
+        if type == .flagsChanged {
+            if event.getIntegerValueField(.keyboardEventKeycode) == 63 {
+                fnKeyIsDown = event.flags.contains(.maskSecondaryFn)
+            }
+            return false
+        }
         let keyboard = type == .keyDown || type == .keyUp
         let raw = event.getIntegerValueField(keyboard ? .keyboardEventKeycode : .mouseEventButtonNumber)
         let button: Int64
         if keyboard {
-            guard raw == 105 || raw == 107 else { return false }
-            button = raw == 105 ? 3 : 4
+            guard raw == 105 || raw == 107 || raw == 113 else { return false }
+            button = raw == 113 ? 2 : (raw == 105 ? 3 : 4)
         } else {
             guard raw == 2 || raw == 3 || raw == 4 else { return false }
             button = raw
@@ -121,6 +131,14 @@ final class MouseShortcutService {
             if held[identity] != nil { return true }
             let modifiers: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
             guard event.flags.intersection(modifiers).isEmpty else { return false }
+            if fnKeyIsDown {
+                let gesture: MouseShortcutGesture = button == 2 ? .fnMiddle : (button == 3 ? .fnBack : .fnForward)
+                let selected = gesture.action(in: defaults)
+                guard selected != .none else { return false }
+                held[identity] = Press(started: ProcessInfo.processInfo.systemUptime, click: selected,
+                                       hold: .none, double: .none, isSecond: false, isFn: true)
+                return true
+            }
             let gestures: (MouseShortcutGesture, MouseShortcutGesture, MouseShortcutGesture)
             switch button {
             case 2: gestures = (.middleClick, .middleHold, .middleDouble)
@@ -138,10 +156,14 @@ final class MouseShortcutService {
             }
             guard firstClick != nil || click != .none || hold != .none || double != .none else { return false }
             held[identity] = Press(started: ProcessInfo.processInfo.systemUptime, click: click, hold: hold,
-                                   double: firstClick?.double ?? double, isSecond: firstClick != nil)
+                                   double: firstClick?.double ?? double, isSecond: firstClick != nil, isFn: false)
             return true
         }
         guard let press = held.removeValue(forKey: identity) else { return false }
+        if press.isFn {
+            DispatchQueue.main.async { [action] in action(press.click) }
+            return true
+        }
         let duration = ProcessInfo.processInfo.systemUptime - press.started
         if duration >= MouseShortcutResolution.holdThreshold {
             if press.hold != .none { DispatchQueue.main.async { [action] in action(press.hold) } }

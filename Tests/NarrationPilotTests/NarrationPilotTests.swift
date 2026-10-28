@@ -1,4 +1,5 @@
 import XCTest
+import CoreGraphics
 @testable import NarrationPilot
 
 final class NarrationPilotTests: XCTestCase {
@@ -288,6 +289,9 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertEqual(MouseShortcutGesture.backDouble.action(in: defaults), .none)
         XCTAssertEqual(MouseShortcutGesture.forwardDouble.action(in: defaults), .none)
         XCTAssertEqual(MouseShortcutGesture.middleDouble.action(in: defaults), .none)
+        XCTAssertEqual(MouseShortcutGesture.fnBack.action(in: defaults), .none)
+        XCTAssertEqual(MouseShortcutGesture.fnForward.action(in: defaults), .none)
+        XCTAssertEqual(MouseShortcutGesture.fnMiddle.action(in: defaults), .none)
         defaults.set(MouseShortcutAction.next.rawValue, forKey: MouseShortcutGesture.middleDouble.key)
         XCTAssertEqual(MouseShortcutGesture.middleDouble.action(in: defaults), .next)
         defaults.set(MouseShortcutAction.next.rawValue, forKey: MouseShortcutGesture.backHold.key)
@@ -300,6 +304,29 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertEqual(MouseShortcutResolution.action(click: .replay, hold: .next, duration: 0.59), .replay)
         XCTAssertEqual(MouseShortcutResolution.action(click: .replay, hold: .next, duration: 0.6), .next)
         XCTAssertEqual(MouseShortcutResolution.action(click: .replay, hold: .none, duration: 1), .none)
+    }
+
+    @MainActor
+    func testF13FnFlagDoesNotImplyPhysicalFnIsHeld() {
+        let suite = "MouseFnTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let service = MouseShortcutService(defaults: defaults) { _ in }
+        let f13Down = CGEvent(keyboardEventSource: nil, virtualKey: 105, keyDown: true)!
+        f13Down.flags = .maskSecondaryFn
+        let f13Up = CGEvent(keyboardEventSource: nil, virtualKey: 105, keyDown: false)!
+        f13Up.flags = .maskSecondaryFn
+        XCTAssertTrue(service.handle(.keyDown, f13Down))
+        XCTAssertTrue(service.handle(.keyUp, f13Up))
+
+        let fnDown = CGEvent(keyboardEventSource: nil, virtualKey: 63, keyDown: true)!
+        fnDown.flags = .maskSecondaryFn
+        XCTAssertFalse(service.handle(.flagsChanged, fnDown))
+        XCTAssertFalse(service.handle(.keyDown, f13Down))
+        XCTAssertFalse(service.handle(.keyUp, f13Up))
+        defaults.set(MouseShortcutAction.next.rawValue, forKey: MouseShortcutGesture.fnBack.key)
+        XCTAssertTrue(service.handle(.keyDown, f13Down))
+        XCTAssertTrue(service.handle(.keyUp, f13Up))
     }
 
     func testJSONSceneReplayCodePreservesExactFormatting() {
