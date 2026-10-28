@@ -24,7 +24,7 @@ enum MouseShortcutAction: String, CaseIterable, Identifiable {
 }
 
 enum MouseShortcutGesture: String, CaseIterable {
-    case backClick, backHold, forwardClick, forwardHold, middleClick, middleHold
+    case backClick, backHold, backDouble, forwardClick, forwardHold, forwardDouble, middleClick, middleHold, middleDouble
     var key: String { "clipboardReader.mouseShortcut.\(rawValue)" }
     var defaultAction: MouseShortcutAction {
         switch self {
@@ -32,7 +32,7 @@ enum MouseShortcutGesture: String, CaseIterable {
         case .forwardClick: .read
         case .middleClick: .onScreen
         case .middleHold: .openSceneManager
-        case .backHold, .forwardHold: .none
+        case .backHold, .forwardHold, .backDouble, .forwardDouble, .middleDouble: .none
         }
     }
     func action(in defaults: UserDefaults) -> MouseShortcutAction {
@@ -54,10 +54,20 @@ final class MouseShortcutService {
         let started: TimeInterval
         let click: MouseShortcutAction
         let hold: MouseShortcutAction
+        let double: MouseShortcutAction
+        let isSecond: Bool
+    }
+    private struct Pending {
+        let work: DispatchWorkItem
+        let double: MouseShortcutAction
+        let click: MouseShortcutAction
+        let deadline: TimeInterval
     }
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var held: [Int64: Press] = [:]
+    private var pending: [Int64: Pending] = [:]
+    private static let doubleClickWindow: TimeInterval = 0.3
     private let defaults: UserDefaults
     private let action: (MouseShortcutAction) -> Void
 
@@ -76,6 +86,8 @@ final class MouseShortcutService {
                 let service = Unmanaged<MouseShortcutService>.fromOpaque(context).takeUnretainedValue()
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     service.held.removeAll()
+                    service.pending.values.forEach { $0.work.cancel() }
+                    service.pending.removeAll()
                     if let tap = service.tap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return Unmanaged.passUnretained(event)
                 }
@@ -91,7 +103,7 @@ final class MouseShortcutService {
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 
-    private func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
+    func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
         let keyboard = type == .keyDown || type == .keyUp
         let raw = event.getIntegerValueField(keyboard ? .keyboardEventKeycode : .mouseEventButtonNumber)
         let button: Int64
@@ -108,22 +120,43 @@ final class MouseShortcutService {
             if held[identity] != nil { return true }
             let modifiers: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
             guard event.flags.intersection(modifiers).isEmpty else { return false }
-            let gestures: (MouseShortcutGesture, MouseShortcutGesture)
+            let gestures: (MouseShortcutGesture, MouseShortcutGesture, MouseShortcutGesture)
             switch button {
-            case 2: gestures = (.middleClick, .middleHold)
-            case 3: gestures = (.backClick, .backHold)
-            default: gestures = (.forwardClick, .forwardHold)
+            case 2: gestures = (.middleClick, .middleHold, .middleDouble)
+            case 3: gestures = (.backClick, .backHold, .backDouble)
+            default: gestures = (.forwardClick, .forwardHold, .forwardDouble)
             }
             let click = gestures.0.action(in: defaults)
             let hold = gestures.1.action(in: defaults)
-            guard click != .none || hold != .none else { return false }
-            held[identity] = Press(started: ProcessInfo.processInfo.systemUptime, click: click, hold: hold)
+            let double = gestures.2.action(in: defaults)
+            var firstClick = pending.removeValue(forKey: identity)
+            firstClick?.work.cancel()
+            if let expired = firstClick, ProcessInfo.processInfo.systemUptime >= expired.deadline {
+                if expired.click != .none { DispatchQueue.main.async { [action] in action(expired.click) } }
+                firstClick = nil
+            }
+            guard firstClick != nil || click != .none || hold != .none || double != .none else { return false }
+            held[identity] = Press(started: ProcessInfo.processInfo.systemUptime, click: click, hold: hold,
+                                   double: firstClick?.double ?? double, isSecond: firstClick != nil)
             return true
         }
         guard let press = held.removeValue(forKey: identity) else { return false }
-        let chosen = MouseShortcutResolution.action(click: press.click, hold: press.hold,
-            duration: ProcessInfo.processInfo.systemUptime - press.started)
-        if chosen != .none { DispatchQueue.main.async { [action] in action(chosen) } }
+        let duration = ProcessInfo.processInfo.systemUptime - press.started
+        if duration >= MouseShortcutResolution.holdThreshold {
+            if press.hold != .none { DispatchQueue.main.async { [action] in action(press.hold) } }
+        } else if press.isSecond {
+            DispatchQueue.main.async { [action] in action(press.double) }
+        } else if press.double == .none {
+            if press.click != .none { DispatchQueue.main.async { [action] in action(press.click) } }
+        } else {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.pending.removeValue(forKey: identity) != nil else { return }
+                if press.click != .none { self.action(press.click) }
+            }
+            pending[identity] = Pending(work: work, double: press.double, click: press.click,
+                deadline: ProcessInfo.processInfo.systemUptime + Self.doubleClickWindow)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.doubleClickWindow, execute: work)
+        }
         return true
     }
 }
