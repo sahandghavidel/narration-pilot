@@ -803,6 +803,7 @@ final class AppModel: ObservableObject {
     private let defaults: UserDefaults
     private let clipboardService = ClipboardService()
     private let shortcutTriggerService = ShortcutTriggerService()
+    private var mouseShortcutService: MouseShortcutService?
     private let focuSeeAccessibilityService = FocuSeeAccessibilityService()
     private let neonSpotlightStatusService = NeonSpotlightStatusService()
     private let userActivityIdleService = UserActivityIdleService()
@@ -2673,6 +2674,7 @@ final class AppModel: ObservableObject {
     }
 
     func recheckAccessibilityPermission() {
+        mouseShortcutService?.start()
         let wasTrusted = isShortcutTriggerAccessibilityTrusted
         refreshShortcutTriggerAccessibilityStatus()
         if !wasTrusted, isShortcutTriggerAccessibilityTrusted {
@@ -3436,6 +3438,28 @@ final class AppModel: ObservableObject {
         } else {
             statusMessage = "Script finished."
         }
+    }
+
+    func startMouseShortcuts() {
+        guard mouseShortcutService == nil else {
+            mouseShortcutService?.start()
+            return
+        }
+        mouseShortcutService = MouseShortcutService { [weak self] button in
+            guard let self else { return }
+            if button == 4 {
+                self.readNow(actionBefore: self.readShortcutOneActionBefore,
+                    actionAfter: self.readShortcutOneActionAfter,
+                    delayBefore: self.readShortcutOneDelayBefore,
+                    delayAfter: self.readShortcutOneDelayAfter,
+                    waitsForNeonSpotlight: self.readShortcutOneWaitsForNeonSpotlight,
+                    waitsForUserInactivity: self.readShortcutOneWaitsForUserInactivity,
+                    speedMultiplier: self.readShortcutOneSpeedMultiplier)
+            } else {
+                self.replayCurrentScriptScene()
+            }
+        }
+        mouseShortcutService?.start()
     }
 
     private func registerShortcutHandlers() {

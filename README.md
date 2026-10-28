@@ -127,6 +127,8 @@ The overlay shows the previous, current, and next scenes. It supports custom siz
 
 ### Shortcuts and recording triggers
 
+Mouse Button 4 (Back) replays the current scene. Mouse Button 5 (Forward) runs the first current-input shortcut, including its recording actions. F13 and F14 work as alternatives when the mouse buttons are remapped to those keys. These global mouse shortcuts require Accessibility permission. Control-modified side buttons are reserved for Neon Spotlight.
+
 Narration Pilot provides two shortcuts for reading the current input and three shortcuts that always read the clipboard. Every read shortcut can use a different speed and choose an external action before and after speech: do nothing, toggle the configured shortcut, ensure FocuSee is recording, or ensure FocuSee is paused. Each action can use an independent 0–10 second delay so recording can settle before speech begins and continue briefly after speech ends. Existing trigger settings migrate to the original toggle behavior.
 
 When **Ensure FocuSee is paused** is selected after reading, that shortcut can

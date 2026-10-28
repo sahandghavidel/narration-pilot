@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AppModel.shared.restoreLastChapterJSONIfAvailable()
         }
         AppModel.shared.checkAccessibilityPermissionAtLaunch()
+        AppModel.shared.startMouseShortcuts()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
