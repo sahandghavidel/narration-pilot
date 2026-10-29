@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-enum FocuSeeRecordingState: Equatable {
+enum FocuSeeRecordingState: Equatable, Sendable {
     case notRunning
     case notRecording
     case recording

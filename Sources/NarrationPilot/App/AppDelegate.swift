@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppModel.shared.startMouseShortcuts()
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        AppModel.shared.stopMouseShortcuts()
+    }
+
     func applicationDidBecomeActive(_ notification: Notification) {
         AppModel.shared.recheckAccessibilityPermission()
     }

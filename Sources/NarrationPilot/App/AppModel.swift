@@ -803,6 +803,7 @@ final class AppModel: ObservableObject {
     private let defaults: UserDefaults
     private let clipboardService = ClipboardService()
     private let shortcutTriggerService = ShortcutTriggerService()
+    private let sharedBackRoutingService = SharedBackRoutingService()
     private var mouseShortcutService: MouseShortcutService?
     private let focuSeeAccessibilityService = FocuSeeAccessibilityService()
     private let neonSpotlightStatusService = NeonSpotlightStatusService()
@@ -3486,12 +3487,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func stopMouseShortcuts() {
+        mouseShortcutService?.stop()
+    }
+
     func startMouseShortcuts() {
+        sharedBackRoutingService.start()
         guard mouseShortcutService == nil else {
             mouseShortcutService?.start()
             return
         }
-        mouseShortcutService = MouseShortcutService(defaults: defaults) { [weak self] action in
+        mouseShortcutService = MouseShortcutService(defaults: defaults, backOwner: { [weak self] in
+            self?.sharedBackRoutingService.owner ?? .blocked
+        }) { [weak self] action in
             guard let self else { return }
             switch action {
             case .none:

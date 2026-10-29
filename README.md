@@ -192,3 +192,5 @@ Narration Pilot is open source under the [MIT License](LICENSE).
 While FocuSee is recording, scene replay (including on-screen and code), scene navigation, script restart, and opening the Scene Manager are silently ignored. The same actions are blocked when FocuSee is open but its recording state cannot be determined. Pausing recording makes them available again.
 
 Mouse action menus include Read Clipboard Always 1 and Read Clipboard Always 2, each using its existing speed and recording settings. Clipboard Always 1 is silently blocked during recording or an unknown FocuSee state, for both keyboard and mouse triggers. Clipboard Always 2 remains available.
+
+Plain Back is shared with Neon Spotlight while both apps are running: during FocuSee recording it highlights in Neon Spotlight; while paused, stopped, or closed it uses the configured Narration Pilot Back gestures. Unknown or stale recording state silently blocks plain Back. Command + Back remains an explicit Neon Spotlight trigger. Ownership is retained until release. Forward, Middle, and Fn gestures keep their configured actions. Neon Spotlight must be enabled with its Back trigger enabled.

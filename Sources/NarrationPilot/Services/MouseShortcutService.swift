@@ -68,6 +68,14 @@ final class MouseShortcutService {
         let click: MouseShortcutAction
         let deadline: TimeInterval
     }
+    private struct BackPress {
+        let owner: SharedBackOwner
+        let id: String
+        let started: TimeInterval
+    }
+    private var sharedBackHeld: [Int64: BackPress] = [:]
+    private let backOwner: () -> SharedBackOwner
+    private let forwardBack: (SharedBackPhase, String, TimeInterval) -> Void
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var retryTimer: Timer?
@@ -78,7 +86,14 @@ final class MouseShortcutService {
     private let defaults: UserDefaults
     private let action: (MouseShortcutAction) -> Void
 
-    init(defaults: UserDefaults = .standard, action: @escaping (MouseShortcutAction) -> Void) {
+    init(defaults: UserDefaults = .standard,
+         backOwner: @escaping () -> SharedBackOwner = { .narration },
+         forwardBack: @escaping (SharedBackPhase, String, TimeInterval) -> Void = { phase, id, duration in
+             SharedBackRoutingService.forward(phase, id: id, duration: duration)
+         },
+         action: @escaping (MouseShortcutAction) -> Void) {
+        self.backOwner = backOwner
+        self.forwardBack = forwardBack
         self.defaults = defaults
         self.action = action
     }
@@ -97,6 +112,7 @@ final class MouseShortcutService {
             return MainActor.assumeIsolated {
                 let service = Unmanaged<MouseShortcutService>.fromOpaque(context).takeUnretainedValue()
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    service.cancelForwardedBackPresses()
                     service.held.removeAll()
                     service.fnKeyIsDown = false
                     service.pending.values.forEach { $0.work.cancel() }
@@ -126,11 +142,32 @@ final class MouseShortcutService {
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         source = nil
         tap = nil
+        cancelForwardedBackPresses()
         held.removeAll()
         fnKeyIsDown = false
         pending.values.forEach { $0.work.cancel() }
         pending.removeAll()
         start()
+    }
+
+    private func cancelForwardedBackPresses() {
+        for press in sharedBackHeld.values where press.owner == .neonSpotlight {
+            forwardBack(.cancelled, press.id, 0)
+        }
+        sharedBackHeld.removeAll()
+    }
+
+    func stop() {
+        retryTimer?.invalidate()
+        retryTimer = nil
+        cancelForwardedBackPresses()
+        pending.values.forEach { $0.work.cancel() }
+        pending.removeAll()
+        held.removeAll()
+        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        if let tap { CFMachPortInvalidate(tap) }
+        source = nil
+        tap = nil
     }
 
     func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
@@ -152,10 +189,35 @@ final class MouseShortcutService {
         }
         let identity = keyboard ? raw + 1000 : raw
         let down = type == .keyDown || type == .otherMouseDown
+        // Ownership is chosen once on down and retained even if recording or
+        // modifier state changes while this physical press remains held.
+        if let press = sharedBackHeld[identity] {
+            if down {
+                if press.owner != .narration { return true }
+            } else {
+                sharedBackHeld.removeValue(forKey: identity)
+                if press.owner == .neonSpotlight {
+                    forwardBack(.released, press.id, ProcessInfo.processInfo.systemUptime - press.started)
+                    return true
+                }
+                if press.owner == .blocked { return true }
+            }
+        }
         if down {
             if held[identity] != nil { return true }
             let modifiers: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
             guard event.flags.intersection(modifiers).isEmpty else { return false }
+            if button == 3 && !fnKeyIsDown && sharedBackHeld[identity] == nil {
+                let owner = backOwner()
+                let press = BackPress(owner: owner, id: UUID().uuidString, started: ProcessInfo.processInfo.systemUptime)
+                sharedBackHeld[identity] = press
+                if owner != .narration {
+                    // A delayed single click must not cross into a new owner.
+                    pending.removeValue(forKey: identity)?.work.cancel()
+                    if owner == .neonSpotlight { forwardBack(.pressed, press.id, 0) }
+                    return true
+                }
+            }
             if fnKeyIsDown {
                 let gesture: MouseShortcutGesture = button == 2 ? .fnMiddle : (button == 3 ? .fnBack : .fnForward)
                 let selected = gesture.action(in: defaults)
