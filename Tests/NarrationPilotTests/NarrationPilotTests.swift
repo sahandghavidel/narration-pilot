@@ -11,6 +11,16 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertTrue(FocuSeeRecordingState.notRecording.allowsSceneReview)
     }
 
+    func testConflictingFocuSeeStatesBlockSceneReview() {
+        let elements = [
+            FocuSeeAccessibilityElementSnapshot(role: "AXButton", labels: ["Pause recording"], isEnabled: true),
+            FocuSeeAccessibilityElementSnapshot(role: "AXButton", labels: ["Resume recording"], isEnabled: true),
+            FocuSeeAccessibilityElementSnapshot(role: "AXStaticText", labels: ["Paused"], isEnabled: true),
+            FocuSeeAccessibilityElementSnapshot(role: "AXStaticText", labels: ["Recording"], isEnabled: true)
+        ]
+        XCTAssertEqual(FocuSeeAccessibilityService.classify(isRunning: true, elements: elements), .unknown)
+    }
+
     func testFocuSeeHomeScreenAllowsSceneReview() {
         let home = FocuSeeAccessibilityElementSnapshot(role: "AXStaticText", labels: ["Please select the recording mode"], isEnabled: true)
         XCTAssertEqual(FocuSeeAccessibilityService.classify(isRunning: true, elements: [home]), .notRecording)

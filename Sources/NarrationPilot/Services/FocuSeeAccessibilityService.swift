@@ -58,17 +58,12 @@ struct FocuSeeAccessibilityService {
             element.labels.contains { resumeActionLabels.contains(normalize($0)) }
         }
 
-        if hasPauseAction != hasResumeAction {
-            return hasPauseAction ? .recording : .paused
-        }
-
         let allLabels = elements.flatMap(\.labels).map(normalize)
-        if allLabels.contains(where: pausedStatusLabels.contains) {
-            return .paused
-        }
-        if allLabels.contains(where: recordingStatusLabels.contains) {
-            return .recording
-        }
+        let indicatesRecording = hasPauseAction || allLabels.contains(where: recordingStatusLabels.contains)
+        let indicatesPaused = hasResumeAction || allLabels.contains(where: pausedStatusLabels.contains)
+        if indicatesRecording && indicatesPaused { return .unknown }
+        if indicatesRecording { return .recording }
+        if indicatesPaused { return .paused }
         if allLabels.contains("please select the recording mode") {
             return .notRecording
         }

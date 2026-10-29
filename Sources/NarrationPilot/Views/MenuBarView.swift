@@ -590,10 +590,10 @@ struct MenuBarView: View {
                         mouseShortcutPicker("Fn + Back", selection: $fnBack)
                         mouseShortcutPicker("Fn + Forward", selection: $fnForward)
                         mouseShortcutPicker("Fn + Middle", selection: $fnMiddle)
-                        Text("Plain Back highlights in Neon Spotlight while FocuSee records. Otherwise it uses your Back actions. An unknown recording state silently blocks plain Back.")
+                        Text("Plain Back highlights in Neon Spotlight while FocuSee records. Otherwise it uses your Back actions. Back checks the recording state before routing. Unknown state silently blocks it.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text("Hold for 0.6 seconds, then release. When double-click is enabled, a single click waits briefly. Read Current Input uses the first read shortcut’s settings. Set all three actions to None to pass that button through.")
+                        Text("Hold for 0.6 seconds, then release. When double-click is enabled, a single click waits briefly. Read Current Input uses the first read shortcut’s settings. Set all three actions to None to pass Forward or Middle through. Plain Back is reserved for shared routing.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }

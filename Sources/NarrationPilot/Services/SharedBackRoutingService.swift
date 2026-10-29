@@ -1,7 +1,5 @@
 import Foundation
 
-// Only Narration Pilot decides who owns a plain Back press. Neon Spotlight receives
-// that decision with the press rather than independently sampling recording state.
 enum SharedBackOwner: Equatable {
     case narration, neonSpotlight, blocked
 
@@ -15,44 +13,54 @@ enum SharedBackOwner: Equatable {
 }
 
 enum SharedBackPhase: String {
-    case pressed, released, cancelled
+    case pressed, held, released, cancelled
 }
 
 @MainActor
 final class SharedBackRoutingService {
-    private var state: FocuSeeRecordingState = .unknown
-    private var sampledAt: TimeInterval = 0
-    private var task: Task<Void, Never>?
-
-    var owner: SharedBackOwner {
-        // Never route from a stale or incomplete Accessibility inspection.
-        guard ProcessInfo.processInfo.systemUptime - sampledAt < 1.5 else { return .blocked }
-        return SharedBackOwner(state: state)
+    private final class Request {
+        private var completion: ((SharedBackOwner) -> Void)?
+        init(_ completion: @escaping (SharedBackOwner) -> Void) { self.completion = completion }
+        func finish(_ owner: SharedBackOwner) {
+            let callback = completion
+            completion = nil
+            callback?(owner)
+        }
     }
 
-    func start() {
-        guard task == nil else { return }
-        task = Task { [weak self] in
-            while !Task.isCancelled {
-                let began = ProcessInfo.processInfo.systemUptime
-                let state = await Task.detached(priority: .userInitiated) {
-                    FocuSeeAccessibilityService().recordingState()
-                }.value
-                guard let self, !Task.isCancelled else { return }
-                self.state = state
-                self.sampledAt = began
-                do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
-            }
+    // Resolve away from the event tap, using fresh Accessibility data instead
+    // of a periodically cached state. Slow or inaccessible apps fail closed.
+    func resolve(_ completion: @escaping (SharedBackOwner) -> Void) {
+        let request = Request(completion)
+        Task {
+            let state = await Task.detached(priority: .userInitiated) {
+                FocuSeeAccessibilityService().recordingState()
+            }.value
+            request.finish(SharedBackOwner(state: state))
+        }
+        Task {
+            try? await Task.sleep(for: .milliseconds(1500))
+            request.finish(.blocked)
         }
     }
 
     static func forward(_ phase: SharedBackPhase, id: String, duration: TimeInterval) {
-        DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name("local.clipboardreadermac.sharedBack.v1"),
-            object: "local.clipboardreadermac",
-            userInfo: ["version": 1, "phase": phase.rawValue, "id": id,
-                       "duration": duration, "owner": "neonSpotlight"],
-            deliverImmediately: true
-        )
+        func send() {
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name("local.clipboardreadermac.sharedBack.v2"),
+                object: "local.clipboardreadermac",
+                userInfo: ["version": 2, "phase": phase.rawValue, "id": id,
+                           "duration": duration, "owner": "neonSpotlight",
+                           "sentAt": ProcessInfo.processInfo.systemUptime],
+                deliverImmediately: true)
+        }
+        send()
+        // Idempotent end messages are retried; the receiver also times out a
+        // held press if heartbeats cease, even while Narration Pilot is alive.
+        if phase == .released || phase == .cancelled {
+            for delay in [0.1, 0.25] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { send() }
+            }
+        }
     }
 }

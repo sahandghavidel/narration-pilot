@@ -3492,13 +3492,13 @@ final class AppModel: ObservableObject {
     }
 
     func startMouseShortcuts() {
-        sharedBackRoutingService.start()
         guard mouseShortcutService == nil else {
             mouseShortcutService?.start()
             return
         }
-        mouseShortcutService = MouseShortcutService(defaults: defaults, backOwner: { [weak self] in
-            self?.sharedBackRoutingService.owner ?? .blocked
+        mouseShortcutService = MouseShortcutService(defaults: defaults, resolveBackOwner: { [weak self] completion in
+            guard let self else { completion(.blocked); return }
+            self.sharedBackRoutingService.resolve(completion)
         }) { [weak self] action in
             guard let self else { return }
             switch action {
