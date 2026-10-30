@@ -100,15 +100,18 @@ final class MouseShortcutService {
     private let defaults: UserDefaults
     private let resolveBackOwner: (@escaping (SharedBackOwner) -> Void) -> Void
     private let forwardBack: (SharedBackPhase, String, TimeInterval) -> Void
+    private let forwardMiddle: (SharedBackPhase, String, TimeInterval) -> Void
     private let action: (MouseShortcutAction) -> Void
 
     init(defaults: UserDefaults = .standard,
          resolveBackOwner: @escaping (@escaping (SharedBackOwner) -> Void) -> Void = { $0(.narration) },
          forwardBack: @escaping (SharedBackPhase, String, TimeInterval) -> Void = { phase, id, duration in
              SharedBackRoutingService.forward(phase, id: id, duration: duration)
+         }, forwardMiddle: @escaping (SharedBackPhase, String, TimeInterval) -> Void = { phase, id, duration in
+             SharedBackRoutingService.forward(phase, id: id, duration: duration, middle: true)
          }, action: @escaping (MouseShortcutAction) -> Void) {
         self.defaults = defaults; self.resolveBackOwner = resolveBackOwner
-        self.forwardBack = forwardBack; self.action = action
+        self.forwardBack = forwardBack; self.forwardMiddle = forwardMiddle; self.action = action
     }
 
     func start() {
@@ -154,9 +157,9 @@ final class MouseShortcutService {
 
     private func cancelGestures() {
         generation += 1
-        for presses in backQueue.values {
+        for (identity, presses) in backQueue {
             for press in presses where press.began && press.owner == .neonSpotlight {
-                forwardBack(.cancelled, press.id, 0)
+                forwardShared(identity, .cancelled, press.id, 0)
             }
         }
         heartbeatTimer?.invalidate(); heartbeatTimer = nil
@@ -206,9 +209,11 @@ final class MouseShortcutService {
         if active[identity] != nil { return true }
         let modifiers: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
         guard event.flags.intersection(modifiers).isEmpty else { return false }
-        if button == 3 && !fnKeyIsDown {
-            let press = BackPress(started: now, click: MouseShortcutGesture.backClick.action(in: defaults),
-                hold: MouseShortcutGesture.backHold.action(in: defaults), double: MouseShortcutGesture.backDouble.action(in: defaults))
+        if (button == 3 || button == 2) && !fnKeyIsDown {
+            let press = BackPress(started: now,
+                click: (button == 2 ? MouseShortcutGesture.middleClick : .backClick).action(in: defaults),
+                hold: (button == 2 ? MouseShortcutGesture.middleHold : .backHold).action(in: defaults),
+                double: (button == 2 ? MouseShortcutGesture.middleDouble : .backDouble).action(in: defaults))
             press.firstClick = takePending(identity, pressedAt: now)
             backQueue[identity, default: []].append(press)
             active[identity] = .shared
@@ -249,6 +254,11 @@ final class MouseShortcutService {
         return first
     }
 
+    private func forwardShared(_ identity: Int64, _ phase: SharedBackPhase, _ id: String, _ duration: TimeInterval) {
+        if identity == 2 || identity == 1113 { forwardMiddle(phase, id, duration) }
+        else { forwardBack(phase, id, duration) }
+    }
+
     private func pumpBack(_ identity: Int64) {
         while let press = backQueue[identity]?.first {
             // Pause an eligible first-click timer as soon as the next press is
@@ -263,7 +273,7 @@ final class MouseShortcutService {
                         double: press.firstClick?.double ?? press.double, isSecond: press.firstClick != nil,
                         isFn: false, plainBack: true)
                 case .neonSpotlight:
-                    forwardBack(.pressed, press.id, (press.releasedAt ?? ProcessInfo.processInfo.systemUptime) - press.started)
+                    forwardShared(identity, .pressed, press.id, (press.releasedAt ?? ProcessInfo.processInfo.systemUptime) - press.started)
                     startHeartbeat()
                 case .blocked: break
                 }
@@ -271,7 +281,7 @@ final class MouseShortcutService {
             guard let ended = press.releasedAt else { return }
             switch owner {
             case .narration: finishPress(identity, endedAt: ended)
-            case .neonSpotlight: forwardBack(.released, press.id, ended - press.started)
+            case .neonSpotlight: forwardShared(identity, .released, press.id, ended - press.started)
             case .blocked: break
             }
             backQueue[identity]?.removeFirst()
@@ -290,10 +300,10 @@ final class MouseShortcutService {
 
     private func sendHeartbeats() {
         var any = false
-        for queue in backQueue.values {
+        for (identity, queue) in backQueue {
             for press in queue where press.began && press.owner == .neonSpotlight && press.releasedAt == nil {
                 any = true
-                forwardBack(.held, press.id, ProcessInfo.processInfo.systemUptime - press.started)
+                forwardShared(identity, .held, press.id, ProcessInfo.processInfo.systemUptime - press.started)
             }
         }
         if !any { heartbeatTimer?.invalidate(); heartbeatTimer = nil }

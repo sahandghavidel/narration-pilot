@@ -44,12 +44,12 @@ final class SharedBackRoutingService {
         }
     }
 
-    static func forward(_ phase: SharedBackPhase, id: String, duration: TimeInterval) {
+    static func forward(_ phase: SharedBackPhase, id: String, duration: TimeInterval, middle: Bool = false) {
         func send() {
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("local.clipboardreadermac.sharedBack.v2"),
+                Notification.Name(middle ? "local.clipboardreadermac.sharedMiddle.v1" : "local.clipboardreadermac.sharedBack.v2"),
                 object: "local.clipboardreadermac",
-                userInfo: ["version": 2, "phase": phase.rawValue, "id": id,
+                userInfo: ["version": middle ? 1 : 2, "phase": phase.rawValue, "id": id,
                            "duration": duration, "owner": "neonSpotlight",
                            "sentAt": ProcessInfo.processInfo.systemUptime],
                 deliverImmediately: true)

@@ -203,3 +203,9 @@ run on a utility queue, at most every two seconds, with a single request in flig
 slow checks fail closed. No narration or clipboard text is included. Neon uses
 this to suspend hover previews and their tracking queries outside narration or
 confirmed recording. Both apps must be updated for this integration.
+
+Plain Middle Click / Karabiner F15 shares the existing fresh FocuSee-state router:
+recording-owned gestures are relayed to Neon Spotlight's clipboard typing on
+release. Paused/stopped gestures retain configured click/double/hold actions and
+are rechecked before dispatch. Unknown state is ignored. Fn gestures remain on
+their existing path. Both updated apps must be running for the shared route.
