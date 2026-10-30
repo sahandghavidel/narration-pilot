@@ -812,6 +812,7 @@ final class AppModel: ObservableObject {
     private let notionSceneService = NotionSceneService()
     private let baserowSceneService = BaserowSceneService()
     private let ttsManager = TTSManager()
+    private let previewActivityPublisher = PreviewActivityPublisher()
     private var cancellables = Set<AnyCancellable>()
     private var presenterOverlayController: PresenterOverlayController?
     private var sceneEditorController: SceneEditorController?
@@ -1069,6 +1070,7 @@ final class AppModel: ObservableObject {
             fallback: Color(red: 0.85, green: 0.87, blue: 0.91)
         )
 
+        previewActivityPublisher.start()
         bindSpeechState()
         registerShortcutHandlers()
         presenterOverlayController = PresenterOverlayController(appModel: self)
@@ -3305,6 +3307,7 @@ final class AppModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 self?.speechState = state
+                self?.previewActivityPublisher.update(speaking: state == .speaking)
                 self?.persistExternalSpeechState(state)
                 if state != .speaking {
                     self?.statusMessage = state.label

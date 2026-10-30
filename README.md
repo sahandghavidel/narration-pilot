@@ -196,3 +196,10 @@ Mouse action menus include Read Clipboard Always 1 and Read Clipboard Always 2, 
 Plain Back is shared with Neon Spotlight while both apps are running: during FocuSee recording it highlights in Neon Spotlight; while paused, stopped, or closed it uses the configured Narration Pilot Back gestures. Unknown recording state or a state check taking over 1.5 seconds silently blocks plain Back. Command + Back remains an explicit Neon Spotlight trigger. Ownership is retained until release. Forward, Middle, and Fn gestures keep their configured actions. Neon Spotlight must be enabled with its Back trigger enabled.
 
 Shared Back uses a fresh recording-state check on press and checks again before dispatching a Narration Pilot action, including a delayed single click. Neon Spotlight derives hold duration from sender timestamps, receives held-state heartbeats, and releases a missing up event after 0.8 seconds without a heartbeat. Both apps must use the v2 routing protocol from the same update.
+
+Neon Spotlight preview integration: Narration Pilot publishes speech/recording
+activity locally once per second and when speech changes. FocuSee state checks
+run on a utility queue, at most every two seconds, with a single request in flight;
+slow checks fail closed. No narration or clipboard text is included. Neon uses
+this to suspend hover previews and their tracking queries outside narration or
+confirmed recording. Both apps must be updated for this integration.
