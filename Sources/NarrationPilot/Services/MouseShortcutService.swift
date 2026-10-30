@@ -114,6 +114,13 @@ final class MouseShortcutService {
         self.forwardBack = forwardBack; self.forwardMiddle = forwardMiddle; self.action = action
     }
 
+    var listenerHealthy: Bool {
+        guard let tap else { return false }
+        return CFMachPortIsValid(tap) && CGEvent.tapIsEnabled(tap: tap)
+    }
+
+    func recoverListener() { refreshListener() }
+
     func start() {
         if retryTimer == nil {
             retryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in

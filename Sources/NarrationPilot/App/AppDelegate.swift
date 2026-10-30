@@ -14,9 +14,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         AppModel.shared.checkAccessibilityPermissionAtLaunch()
         AppModel.shared.startMouseShortcuts()
+        RuntimeReliability.shared.start(recover: {
+            AppModel.shared.recoverInputListeners()
+        }, resume: { AppModel.shared.recoverAfterSessionResume() }, listeners: { ["mouseShortcuts": AppModel.shared.mouseListenerHealthy] })
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        RuntimeReliability.shared.stop()
         AppModel.shared.stopMouseShortcuts()
     }
 

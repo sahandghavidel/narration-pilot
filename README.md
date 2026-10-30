@@ -209,3 +209,38 @@ recording-owned gestures are relayed to Neon Spotlight's clipboard typing on
 release. Paused/stopped gestures retain configured click/double/hold actions and
 are rechecked before dispatch. Unknown state is ignored. Fn gestures remain on
 their existing path. Both updated apps must be running for the shared route.
+
+
+## Reliable installation and startup
+
+Build the complete bundle with `scripts/build-app.sh release`, then install it
+with `bash scripts/install-app.sh release`. The installer validates signatures
+and bundle identity, stages the complete app, stops existing processes, replaces
+the canonical `/Applications` app, verifies the executable, and retains a rollback
+bundle outside Launch Services' normal `.app` naming. A failed replacement restores
+the previous installed bundle. Finder's bundle modification date is refreshed.
+`BuildRevision` and `BuildDateUTC` in Info.plist identify the build precisely.
+
+New build-folder app copies redirect to the installed app before initializing
+shortcuts. A per-user kernel lock prevents simultaneous new instances, and releases
+automatically on exit/crash. Historical binaries predating this guard should not
+be launched; the normal debug bundle is refreshed by the release installer.
+
+Input health is checked every two seconds, with retries after permission becomes
+available. Wake/session activation resets interrupted input and requests recovery.
+Narration Pilot also re-registers its saved keyboard shortcuts after wake.
+
+Quiet diagnostics (no clipboard/narration text) are stored at:
+
+`~/Library/Application Support/local.clipboardreadermac/Runtime/status.json`
+
+The file contains running path, PID, version/build revision/date, Accessibility
+trust and actual event-tap health. Permission reports/tap creation do not prove
+physical shortcut behavior. Login, wake, recording and mouse behavior require a
+physical test.
+
+Set `APP_SIGNING_IDENTITY` to a valid installed signing identity when building.
+The fallback remains ad-hoc signing and does **not** guarantee preserved macOS
+permissions across changed builds. No custom weaker designated requirement or
+TCC reset is used. A valid consistent certificate must be available to investigate
+permission preservation further; no certificate is created automatically.

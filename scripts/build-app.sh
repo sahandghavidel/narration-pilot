@@ -93,6 +93,16 @@ cat > "$CONTENTS_PATH/Info.plist" <<'PLIST'
 PLIST
 
 chmod +x "$CONTENTS_PATH/MacOS/NarrationPilot"
-codesign --force --deep --sign - --timestamp=none "$APP_PATH"
 
+# Metadata identifies the actual executable even when Finder cached folder dates.
+build_revision="$(git rev-parse --short HEAD)"
+if [ -n "$(git status --porcelain)" ]; then build_revision="$build_revision-dirty"; fi
+build_date="$(date -u -r "$(stat -f %m "$BINARY_DIR/NarrationPilot")" +%Y-%m-%dT%H:%M:%SZ)"
+/usr/libexec/PlistBuddy -c "Add :BuildRevision string $build_revision" "$CONTENTS_PATH/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :BuildRevision $build_revision" "$CONTENTS_PATH/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :BuildDateUTC string $build_date" "$CONTENTS_PATH/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :BuildDateUTC $build_date" "$CONTENTS_PATH/Info.plist"
+
+codesign --force --deep --sign "${APP_SIGNING_IDENTITY:--}" --timestamp=none "$APP_PATH"
+
+codesign --verify --deep --strict "$APP_PATH"
+touch "$APP_PATH"
 echo "$APP_PATH"

@@ -3490,6 +3490,18 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func recoverAfterSessionResume() {
+        mouseShortcutService?.stop()
+        startMouseShortcuts()
+        let names: [KeyboardShortcuts.Name] = [.readClipboard, .readCurrentInputSecondary, .readClipboardAlways, .readClipboardAlwaysSecondary, .readClipboardAlwaysTertiary, .stopReading, .pauseResumeReading, .replayScriptScene, .replayOnScreenOnly, .replayCodeOnly, .previousScriptScene, .nextScriptScene, .restartScript, .togglePresenterOverlay, .editCurrentScene, .openFocusAndPlaySceneManager, .ensureFocuSeeRecording, .ensureFocuSeePaused]
+        for name in names { KeyboardShortcuts.disable(name); KeyboardShortcuts.enable(name) }
+    }
+
+    var mouseListenerHealthy: Bool { mouseShortcutService?.listenerHealthy ?? false }
+    func recoverInputListeners() {
+        mouseShortcutService?.recoverListener()
+    }
+
     func stopMouseShortcuts() {
         mouseShortcutService?.stop()
     }
