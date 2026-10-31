@@ -806,7 +806,12 @@ struct JSONSceneManagerView: View {
     }
 
     private func codeSection(_ code: NarrationCode) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let language = code.language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isShell = ["shell", "sh", "bash", "zsh", "shellscript", "shell script", "shell-script", "shell_script", "console", "terminal", "command", "powershell", "pwsh", "cmd", "bat", "batch"]
+            .contains(language)
+        let isPlainText = isShell || ["", "text", "txt", "plain", "plaintext", "plain text", "plain_text", "plain-text", "prompt"]
+            .contains(language)
+        return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(code.language.uppercased())
                     .font(.caption.bold())
@@ -818,7 +823,7 @@ struct JSONSceneManagerView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(activeField == .code ? "Done Editing" : "Edit Code") {
+                Button(activeField == .code ? "Done Editing" : (isShell ? "Edit Command" : (isPlainText ? "Edit Text" : "Edit Code"))) {
                     if activeField == .code {
                         _ = commitEdits()
                     } else {
@@ -830,7 +835,7 @@ struct JSONSceneManagerView: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(codeText, forType: .string)
                 } label: {
-                    Label("Copy Code", systemImage: "doc.on.doc")
+                    Label(isShell ? "Copy Command" : (isPlainText ? "Copy Text" : "Copy Code"), systemImage: "doc.on.doc")
                 }
             }
 
@@ -845,11 +850,33 @@ struct JSONSceneManagerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            SyntaxHighlightedCodeEditor(
-                text: $codeText,
-                language: code.language,
-                isEditable: activeField == .code
-            )
+            Group {
+                if isPlainText {
+                    if activeField == .code {
+                        TextEditor(text: $codeText)
+                            .font(.system(size: previewFontSize))
+                            .foregroundStyle(.primary)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                    } else {
+                        ScrollView(.vertical) {
+                            Text(codeText)
+                                .font(.system(size: previewFontSize))
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                                .padding(10)
+                        }
+                    }
+                } else {
+                    SyntaxHighlightedCodeEditor(
+                        text: $codeText,
+                        language: code.language,
+                        isEditable: activeField == .code
+                    )
+                }
+            }
+            .background(isPlainText ? Color(nsColor: .textBackgroundColor) : Color.clear)
             .frame(minHeight: activeField == .code ? 190 : 110, maxHeight: activeField == .code ? 300 : 180)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(

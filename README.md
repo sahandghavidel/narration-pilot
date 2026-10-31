@@ -106,7 +106,7 @@ Use **Previous**, **Replay**, **Next**, and **Restart** to navigate. Open **Edit
 
 ### Chapter JSON mode
 
-Turn on **Script mode**, select **Chapter JSON**, and import a version 5 chapter file. Each scene keeps `narration`, one `onScreen` recording instruction, optional structured `code`, an optional `postProduction` note, and an optional AI `annotation`. Speech and Replay read only `narration`; Replay On Screen Only reads the instruction separately. The JSON Scene Manager edits and safely saves these fields. Narration Pilot remembers the active chapter after restarting, and changes detected during speech are applied when speech finishes. Versions 2–4 remain readable and are migrated in memory.
+Turn on **Script mode**, select **Chapter JSON**, and import a version 5 chapter file. Each scene keeps `narration`, one `onScreen` recording instruction, optional structured `code`, an optional `postProduction` note, and an optional AI `annotation`. Speech and Replay read only `narration`; Replay On Screen Only reads the instruction separately. The JSON Scene Manager edits and safely saves these fields. Plain-text prompts and shell commands use a selectable, wrapping text preview with Edit Text/Copy Text or Edit Command/Copy Command controls; HTML, CSS, and JavaScript keep syntax highlighting. Narration Pilot remembers the active chapter after restarting, and changes detected during speech are applied when speech finishes. Versions 2–4 remain readable and are migrated in memory.
 
 Narration Pilot can also receive a JSON file directly:
 
