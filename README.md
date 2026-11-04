@@ -125,6 +125,19 @@ swiftc Sources/NarrationPilot/Models/NarrationChapter.swift scripts/validate-cha
 
 The overlay shows the previous, current, and next scenes. It supports custom sizing, placement, opacity, typography, colors, and quick color presets. You can hide it from standard macOS screen capture or hide it automatically while speech is playing.
 
+### Ultimate Video Editor voice selection
+
+The **Ultimate Video Editor voice** section sits above **Speech settings** in the
+menu bar panel. It loads enabled English OmniVoice and OmniVoice LoRA presets
+from `http://localhost:9540/api/tts-audio-references`. Open Ultimate Video Editor
+and click **Refresh** if the connection is unavailable. Your choice is saved
+automatically and retained across restarts and connection failures.
+
+This section currently selects a voice for future scene audio generation. It
+does not generate audio or change playback, recording, shortcuts, or the existing
+macOS voice selection under **Speech settings**. It only reads the preset list;
+no narration text is sent to the editor.
+
 ### Shortcuts and recording triggers
 
 Under **Global shortcuts → Playback and scene shortcuts**, configure separate click, double-click, and hold actions for Back, Forward, and Middle. Defaults are Back click to replay the scene, Forward click to run the first current-input shortcut (including its recording actions), Middle click to read the on-screen instruction, and Middle hold to open the Scene Manager. Double-click actions default to None. Holds last at least 0.6 seconds; actions run on release. When a double-click is assigned, the single click waits 0.3 seconds for a possible second press. Set all three Forward or Middle actions to None to pass that button’s events through; plain Back remains reserved for shared routing. if Karabiner remaps a side button, the passed event remains F13 or F14. F13 and F14 also support the configured side-button actions. F15 supports the configured middle-button actions when Karabiner maps button3 to f15. These global mouse shortcuts require Accessibility permission. Control-modified side buttons are reserved for Neon Spotlight.

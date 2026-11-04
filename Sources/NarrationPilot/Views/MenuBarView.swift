@@ -323,6 +323,8 @@ struct MenuBarView: View {
                 .disabled(appModel.speechState == .idle || appModel.speechState == .stopping)
             }
 
+            UltimateEditorVoiceView()
+
             DisclosureGroup("Speech settings", isExpanded: $speechSettingsExpanded) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Read Speed: \(appModel.speedMultiplier, specifier: "%.2f")x")
