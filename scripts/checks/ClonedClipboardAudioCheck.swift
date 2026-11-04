@@ -161,6 +161,28 @@ struct ClonedClipboardAudioCheck {
         await restored.generate(clipboard: "Duplicate", voiceID: "test-voice")
         await pending.value
         precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.postCount } == posts)
+        // Global approval must target the version actually previewed, with matching
+        // normalized narration and voice. No real playback or clipboard writes.
+        precondition(ClonedClipboardAudioController.previewApprovalIssue(take: first, previewedID: first.id,
+            narration: "[Click] Hello  world.", voiceID: "test-voice") == nil)
+        precondition(ClonedClipboardAudioController.previewApprovalIssue(take: first, previewedID: nil,
+            narration: "Hello world.", voiceID: "test-voice") != nil)
+        precondition(ClonedClipboardAudioController.previewApprovalIssue(take: first, previewedID: UUID(),
+            narration: "Hello world.", voiceID: "test-voice") != nil)
+        precondition(ClonedClipboardAudioController.previewApprovalIssue(take: first, previewedID: first.id,
+            narration: "Changed scene.", voiceID: "test-voice") != nil)
+        precondition(ClonedClipboardAudioController.previewApprovalIssue(take: first, previewedID: first.id,
+            narration: "Hello world.", voiceID: "another-voice") != nil)
+        precondition(ClonedClipboardAudioController.previewApprovalIssue(take: nil, previewedID: nil,
+            narration: "Hello world.", voiceID: "test-voice") != nil)
+        restored.select(first.id)
+        precondition(restored.approvePreviewed(narration: "Hello world.", voiceID: "test-voice") == nil)
+        precondition(!restored.selectedIsApproved && restored.message.contains("Preview the selected"))
+        restored.approvedRecordingIsActive = { true }
+        precondition(restored.approveSelected() == nil && !restored.selectedIsApproved)
+        precondition(restored.approvePreviewed(narration: "Hello world.", voiceID: "test-voice") == nil)
+        precondition(restored.message.contains("before approving"))
+        restored.approvedRecordingIsActive = { false }
         // Approval, local reuse without any HTTP, and deliberate regeneration.
         restored.recordingAllowsPreview = { true }
         var previewChecks = 0
@@ -172,6 +194,9 @@ struct ClonedClipboardAudioCheck {
         precondition(restored.transcriptions[first.id]?.words.count == 2)
         precondition(restored.transcriptions[first.id]?.model == "tiny.en")
         let requests = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
+        precondition(restored.approveSelected() == nil && restored.message.contains("already approved"))
+        precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == requests)
+
         await restored.generate(clipboard: "[Different direction] Hello\n world.  ", voiceID: "test-voice")
         precondition(restored.selectedID == first.id && restored.takes.count == 2)
         precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == requests)
@@ -242,6 +267,6 @@ struct ClonedClipboardAudioCheck {
         await reopened.previewSelected()
         precondition(reopened.message.contains("before previewing"))
         precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeMissing)
-        print("PASS: grouped approval/reuse plus Tiny.en timings, fingerprint invalidation, restart cache, failure/retry, empty timestamps, duplicate suppression and independent version caches; no real playback")
+        print("PASS: shortcut approval matching, preview identity, recording guard and idempotence; grouped approval/reuse plus Tiny.en timings, fingerprint invalidation, restart cache, failure/retry, empty timestamps, duplicate suppression and independent version caches; no real playback")
     }
 }

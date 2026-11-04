@@ -140,7 +140,7 @@ speech shortcuts.
 
 ### Cloned clipboard audio
 
-Copy one scene's narration and press **Command + Shift + G**, or click
+Copy one scene's narration and press **Command + Shift + T**, or click
 **Prepare & Preview Clipboard** under **Cloned Voice Audio**. The shortcut can
 be changed with its recorder in that section. It always reads the clipboard,
 regardless of the script or typed-text input mode. Bracketed recording directions
@@ -200,6 +200,19 @@ stopped, or closed. Unknown recording state blocks preview. Preview is checked
 again after generation and stops if speech or recording becomes active. No
 recording shortcut is sent, no scene is advanced, and there is no fallback to
 macOS speech. Approved audio recording has its own controls below.
+
+Cloned audio has independent, configurable shortcut recorders for **Prepare &
+Preview Clipboard** (Command–Shift–T), **Regenerate & Preview Clipboard**
+(Command–Shift–G), and **Approve Previewed Clipboard Audio** (Command–Shift–A).
+Existing saved bindings are retained. Regeneration always creates a new version
+without changing the current approval. The approval shortcut requires the selected
+version to have been previewed in this app session and to match the current
+clipboard narration and selected voice; it is blocked during generation or an
+approved-audio take. Repeating approval does nothing. Approval saves immediately
+and starts cached word-timing creation in the background. The library's explicit
+**Approve Selected Audio** button remains available. The separate recording
+shortcut retains its saved binding (Sahand's Command–Shift–R). macOS speech
+shortcuts are unchanged.
 
 ### Approved audio recording
 

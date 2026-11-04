@@ -3625,6 +3625,10 @@ final class AppModel: ObservableObject {
         approvedAudioRecording.cancel()
         KeyboardShortcuts.disable(.recordApprovedClipboardAudio)
         KeyboardShortcuts.enable(.recordApprovedClipboardAudio)
+        KeyboardShortcuts.disable(.approveClonedClipboardAudio)
+        KeyboardShortcuts.enable(.approveClonedClipboardAudio)
+        KeyboardShortcuts.disable(.regenerateClonedClipboardAudio)
+        KeyboardShortcuts.enable(.regenerateClonedClipboardAudio)
         KeyboardShortcuts.disable(.generateClonedClipboardAudio)
         KeyboardShortcuts.enable(.generateClonedClipboardAudio)
         mouseShortcutService?.stop()
@@ -3704,6 +3708,12 @@ final class AppModel: ObservableObject {
         }
         KeyboardShortcuts.onKeyUp(for: .generateClonedClipboardAudio) { [weak self] in
             Task { @MainActor in self?.clonedClipboardAudio.generateClipboard() }
+        }
+        KeyboardShortcuts.onKeyUp(for: .approveClonedClipboardAudio) { [weak self] in
+            Task { @MainActor in self?.clonedClipboardAudio.approvePreviewedClipboard() }
+        }
+        KeyboardShortcuts.onKeyUp(for: .regenerateClonedClipboardAudio) { [weak self] in
+            Task { @MainActor in self?.clonedClipboardAudio.generateClipboard(forceNewVersion: true) }
         }
         KeyboardShortcuts.onKeyUp(for: .copyCurrentSceneForAgent) { [weak self] in
             Task { @MainActor in self?.agentFeedback.copySnapshot() }

@@ -12,6 +12,8 @@ struct ClonedClipboardAudioView: View {
                     audio.generateClipboard()
                 }
                 .disabled(audio.isGenerating)
+                KeyboardShortcuts.Recorder("Regenerate & Preview Clipboard", name: .regenerateClonedClipboardAudio)
+                KeyboardShortcuts.Recorder("Approve Previewed Clipboard Audio", name: .approveClonedClipboardAudio)
                 Button("Generate New Version") { audio.generateClipboard(forceNewVersion: true) }
                     .disabled(audio.isGenerating)
                 if audio.isGenerating { ProgressView().controlSize(.small) }
@@ -42,7 +44,7 @@ struct ClonedClipboardAudioView: View {
                         Text(audio.selectedIsApproved ? "Approved for reuse" : "This version is not approved")
                             .font(.caption).foregroundStyle(audio.selectedIsApproved ? Color.green : Color.secondary)
                         Button(audio.selectedIsApproved ? "Approved" : "Approve Selected Audio") { audio.approveSelected() }
-                            .disabled(audio.isGenerating || audio.selectedIsApproved)
+                            .disabled(audio.isGenerating || audio.selectedIsApproved || audio.approvedRecordingIsActive())
                         Text(audio.selectedTranscriptionStatus).font(.caption).textSelection(.enabled)
                         if audio.transcribingIDs.contains(take.id) {
                             ProgressView().controlSize(.small)
@@ -64,6 +66,8 @@ struct ClonedClipboardAudioView: View {
                         Button("Show File") { audio.revealSelected() }
                     }
                 }
+                Text("The approval shortcut approves the version you previewed only when it matches the current clipboard and selected voice.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("Prepare reuses approved audio for matching narration and voice. Otherwise it generates a version. Generate New Version always uses the current clipboard and voice, keeping the existing approval. Preview never starts FocuSee.")
                     .font(.caption).foregroundStyle(.secondary)
             }

@@ -70,6 +70,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
     private var player: AVAudioPlayer?
     private var previewTask: Task<Void, Never>?
     private var previewRevision = UUID()
+    private var lastPreviewedID: UUID?
     private static let selectedKey = "narrationPilot.clonedClipboard.selectedTake"
 
     init(directory: URL = ClonedClipboardAudioController.directory,
@@ -151,8 +152,40 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
     }
 
     @discardableResult
+    func approvePreviewedClipboard() -> Task<Void, Never>? {
+        guard let voice = UltimateEditorVoiceLibrary(defaults: defaults).selectedVoice else {
+            message = "Choose an English voice before approving audio."; return nil
+        }
+        return approvePreviewed(narration: NSPasteboard.general.string(forType: .string) ?? "", voiceID: voice.id)
+    }
+
+    @discardableResult
+    func approvePreviewed(narration: String, voiceID: String) -> Task<Void, Never>? {
+        guard !isGenerating else { message = "Wait for audio preparation to finish before approving."; return nil }
+        guard !approvedRecordingIsActive() else { message = "Finish the cloned audio take before approving another version."; return nil }
+        if let issue = Self.previewApprovalIssue(take: selectedTake, previewedID: lastPreviewedID,
+                                                 narration: narration, voiceID: voiceID) {
+            message = issue; return nil
+        }
+        stopPreview()
+        return approveSelected()
+    }
+
+    static func previewApprovalIssue(take: ClipboardAudioTake?, previewedID: UUID?, narration: String, voiceID: String) -> String? {
+        guard let take else { return "Prepare and preview audio before approving." }
+        let text = SpokenTextSanitizer.preparingForSpeech(narration, includesBracketedDirections: false)
+        guard !text.isEmpty, ClipboardAudioGrouping.key(text: text, voiceID: voiceID) == take.groupID else {
+            return "The selected audio does not match the clipboard narration and voice. Prepare and preview the matching audio first."
+        }
+        guard take.id == previewedID else { return "Preview the selected version before approving it with the shortcut." }
+        return nil
+    }
+
+    @discardableResult
     func approveSelected() -> Task<Void, Never>? {
         guard !isGenerating, let take = selectedTake else { return nil }
+        guard !approvedRecordingIsActive() else { message = "Finish the cloned audio take before approving another version."; return nil }
+        guard !selectedIsApproved else { message = "This audio is already approved for reuse."; return nil }
         do {
             let validation = try AVAudioPlayer(contentsOf: audioURL(for: take))
             guard validation.duration > 0 else { throw missingApprovedFile() }
@@ -273,6 +306,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
                               userInfo: [NSLocalizedDescriptionKey: "The saved audio could not start playing."])
             }
             self.player = player
+            lastPreviewedID = take.id
             isPreviewing = true
             message = "Previewing \(selectedIsApproved ? "approved audio" : "cloned voice") · \(take.duration.formatted(.number.precision(.fractionLength(1)))) seconds"
             previewTask = Task { [weak self] in

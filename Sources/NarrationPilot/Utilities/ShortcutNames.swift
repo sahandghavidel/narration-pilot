@@ -3,9 +3,19 @@
 extension KeyboardShortcuts.Name {
     static let recordApprovedClipboardAudio = Self("recordApprovedClipboardAudio")
 
+    static let approveClonedClipboardAudio = Self(
+        "approveClonedClipboardAudio",
+        default: KeyboardShortcuts.Shortcut(.a, modifiers: [.command, .shift])
+    )
+
+    static let regenerateClonedClipboardAudio = Self(
+        "regenerateClonedClipboardAudio",
+        default: KeyboardShortcuts.Shortcut(.g, modifiers: [.command, .shift])
+    )
+
     static let generateClonedClipboardAudio = Self(
         "generateClonedClipboardAudio",
-        default: KeyboardShortcuts.Shortcut(.g, modifiers: [.command, .shift])
+        default: KeyboardShortcuts.Shortcut(.t, modifiers: [.command, .shift])
     )
 
     static let readClipboard = Self(
