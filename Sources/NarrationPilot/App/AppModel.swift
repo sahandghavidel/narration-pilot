@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
     static let shared = AppModel()
     let clonedClipboardAudio = ClonedClipboardAudioController()
     let approvedAudioRecording = ApprovedAudioRecordingSession()
+    private let clonedFocuSeeControl = ClonedFocuSeeControl()
     let agentFeedback = AgentFeedbackPublisher()
 
     @Published private(set) var speechState: SpeechState = .idle
@@ -3330,6 +3331,12 @@ final class AppModel: ObservableObject {
     }
 
     private func configureApprovedAudioRecording() {
+        clonedFocuSeeControl.trigger = { [weak self] in self?.triggerRecordingShortcutIfPossible() ?? false }
+        clonedFocuSeeControl.event = { [weak self] event in self?.approvedAudioRecording.recordTimingEvent(event) }
+        approvedAudioRecording.recordingState = { [weak self] in
+            guard let self else { return .unknown }
+            return await self.clonedFocuSeeControl.sample()
+        }
         clonedClipboardAudio.approvedRecordingIsActive = { [weak self] in self?.approvedAudioRecording.isBusy ?? false }
         approvedAudioRecording.speechIsIdle = { [weak self] in
             guard let self else { return false }
@@ -3338,6 +3345,11 @@ final class AppModel: ObservableObject {
         }
         approvedAudioRecording.performAction = { [weak self] action in
             guard let self else { return "Narration Pilot is unavailable." }
+            if action == .ensureRecording || action == .ensurePaused {
+                self.refreshShortcutTriggerAccessibilityStatus()
+                guard self.isShortcutTriggerAccessibilityTrusted else { return "Accessibility permission is required to inspect FocuSee." }
+                return await self.clonedFocuSeeControl.ensure(action == .ensureRecording ? .recording : .paused)
+            }
             let succeeded = await self.performExternalTriggerAction(action, reportsSuccess: true)
             return succeeded ? nil : self.statusMessage
         }

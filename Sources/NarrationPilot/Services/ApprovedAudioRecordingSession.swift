@@ -121,6 +121,14 @@ final class ApprovedAudioRecordingSession: ObservableObject {
     private var sessionID: UUID?
     private let inputIdleMonitor = ApprovedAudioIdleMonitor()
     private var idleWaitOutcome = "notRequested"
+    private var timingEvents: [[String: Any]] = []
+    private var startedAt: TimeInterval = 0
+    private var sawAudioClockStart = false
+
+    func recordTimingEvent(_ name: String) {
+        guard isBusy else { return }
+        timingEvents.append(["event": name, "secondsSinceStart": ProcessInfo.processInfo.systemUptime - startedAt])
+    }
 
     init(defaults: UserDefaults = .standard, feedbackURL: URL = ApprovedAudioRecordingSession.feedbackURL) {
         self.defaults = defaults
@@ -153,6 +161,7 @@ final class ApprovedAudioRecordingSession: ObservableObject {
         isBusy = true
         pauseOnCancel = true
         idleWaitOutcome = "notRequested"
+        timingEvents = []; startedAt = ProcessInfo.processInfo.systemUptime; sawAudioClockStart = false
         transition("preparing", "Approved WAV prepared. Starting recording actions…")
         timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateClock() }
@@ -176,31 +185,33 @@ final class ApprovedAudioRecordingSession: ObservableObject {
             }
             do {
                 try Task.checkCancellation()
-                if configuration.before == .ensureRecording { await self.startCue() }
-                try Task.checkCancellation()
-                guard self.speechIsIdle() else { throw self.error("macOS speech became active before playback.") }
-                self.transition("starting", "Running the before-playback action…")
-                mayNeedPause = configuration.before == .ensureRecording || configuration.before == .toggle
-                if let error = await self.performAction(configuration.before) { throw self.error(error) }
-                try Task.checkCancellation()
-                if configuration.before != .none, configuration.delayBefore > 0 {
-                    self.transition("beforeDelay", "Waiting before WAV playback…")
-                    try await Task.sleep(for: .seconds(configuration.delayBefore))
-                }
-                if configuration.before == .ensureRecording {
-                    guard await self.recordingState() == .recording else {
-                        throw self.error("FocuSee is no longer confirmed recording. WAV playback cancelled.")
-                    }
-                }
-                try Task.checkCancellation()
-                guard self.speechIsIdle() else { throw self.error("macOS speech became active before playback.") }
                 if configuration.after == .ensurePaused && configuration.waitsForInputIdle {
                     guard self.beginInputIdleTracking?() ?? self.inputIdleMonitor.start() else {
                         throw self.error("Input activity monitoring is unavailable. Restore Accessibility access before recording with idle waiting.")
                     }
                     trackingInput = true
                     self.idleWaitOutcome = "trackingDuringPlayback"
+                    self.recordTimingEvent("inputMonitoringReady")
                 }
+                if configuration.before == .ensureRecording { await self.startCue() }
+                try Task.checkCancellation()
+                guard self.speechIsIdle() else { throw self.error("macOS speech became active before playback.") }
+                self.transition("starting", "Running the before-playback action…")
+                mayNeedPause = configuration.before == .ensureRecording || configuration.before == .toggle
+                if let error = await self.performAction(configuration.before) { throw self.error(error) }
+                self.recordTimingEvent("beforeActionConfirmed")
+                try Task.checkCancellation()
+                if configuration.before != .none, configuration.delayBefore > 0 {
+                    self.transition("beforeDelay", "Waiting before WAV playback…")
+                    try await Task.sleep(for: .seconds(configuration.delayBefore))
+                }
+                if configuration.before == .ensureRecording && configuration.delayBefore > 0 {
+                    guard await self.recordingState() == .recording else {
+                        throw self.error("FocuSee is no longer confirmed recording. WAV playback cancelled.")
+                    }
+                }
+                try Task.checkCancellation()
+                guard self.speechIsIdle() else { throw self.error("macOS speech became active before playback.") }
                 self.transition("playing", "Playing the approved WAV at its original speed…")
                 if configuration.after == .ensurePaused { mayNeedPause = true }
                 let finished = await self.playToCompletion(prepared)
@@ -234,6 +245,7 @@ final class ApprovedAudioRecordingSession: ObservableObject {
                 try Task.checkCancellation()
                 self.transition("finishing", "Running the after-playback action…")
                 if let error = await self.performAction(configuration.after) { throw self.error(error) }
+                self.recordTimingEvent("afterActionConfirmed")
                 if configuration.after == .ensurePaused { mayNeedPause = false; await self.stopCue() }
                 try Task.checkCancellation()
                 self.transition("completed", self.idleWaitOutcome == "maximumExtraWaitReached"
@@ -274,10 +286,12 @@ final class ApprovedAudioRecordingSession: ObservableObject {
             playbackContinuation = continuation
             player.completion = { [weak self] finished in
                 guard let self, self.sessionID == playbackID else { return }
+                self.recordTimingEvent("audioCompletionCallback")
                 let continuation = self.playbackContinuation
                 self.playbackContinuation = nil
                 continuation?.resume(returning: finished)
             }
+            recordTimingEvent("audioPlayRequested")
             if !player.play(), let pending = playbackContinuation {
                 playbackContinuation = nil
                 pending.resume(returning: false)
@@ -287,13 +301,21 @@ final class ApprovedAudioRecordingSession: ObservableObject {
 
     private func updateClock() {
         if phase == "playing", let player { elapsed = min(duration, max(0, player.currentTime)) }
+        if phase == "playing", elapsed > 0, !sawAudioClockStart {
+            sawAudioClockStart = true
+            recordTimingEvent("audioClockFirstObservedRunning")
+        }
         publish()
     }
 
     private func transition(_ phase: String, _ message: String) {
         self.phase = phase
         self.message = message
-        publish()
+        recordTimingEvent(phase)
+        // Avoid synchronous disk writes between recorder resume and audio start,
+        // or between audio completion and the pause request. The timer publishes
+        // progress and the final defer publishes the complete event trace.
+        if !isBusy { publish() }
     }
 
     private func publish() {
@@ -302,6 +324,7 @@ final class ApprovedAudioRecordingSession: ObservableObject {
             "audioVersionID": takeID?.uuidString ?? "", "phase": phase, "busy": isBusy,
             "staleAfterSeconds": 1, "playbackRate": 1.0,
             "idleWaitOutcome": idleWaitOutcome,
+            "timingEvents": timingEvents,
             "elapsedSeconds": elapsed, "remainingSeconds": remaining, "durationSeconds": duration,
             "clockSource": "AVAudioPlayer.currentTime", "durationIsEstimate": false, "message": message]
         do {

@@ -87,6 +87,11 @@ struct ApprovedAudioRecordingCheck {
         await take.value
         precondition(recording.phase == "completed" && !recording.isBusy && recording.remaining == 0)
         precondition(!tracking)
+        let finalFeedback = try JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("status.json"))) as! [String: Any]
+        let timingEvents = (finalFeedback["timingEvents"] as! [[String: Any]]).compactMap { $0["event"] as? String }
+        precondition(timingEvents.firstIndex(of: "inputMonitoringReady")! < timingEvents.firstIndex(of: "beforeActionConfirmed")!)
+        precondition(timingEvents.firstIndex(of: "beforeActionConfirmed")! < timingEvents.firstIndex(of: "audioPlayRequested")!)
+        precondition(timingEvents.firstIndex(of: "audioCompletionCallback")! < timingEvents.firstIndex(of: "afterActionConfirmed")!)
         precondition(events == ["startCue", "ensureRecording", "verifyRecording", "play", "neon", "inputIdle", "ensurePaused", "stopCue"], events.description)
         // Failed recorder confirmation must not play audio; make a safe cleanup attempt.
         events = []; fake = FakeWAVPlayer(); recording.settings = .init()
@@ -99,9 +104,11 @@ struct ApprovedAudioRecordingCheck {
         precondition(events.contains("ensurePaused"))
         recording.performAction = { action in events.append(action.rawValue); return nil }
         recording.recordingState = { .unknown }
+        recording.settings.delayBefore = 0.01
         events = []; fake = FakeWAVPlayer()
         await recording.start(audio: Data(), takeID: UUID())?.value
         precondition(!fake.didPlay && recording.phase == "failed")
+        recording.settings.delayBefore = 0
         // Explicit cancellation stops the WAV and pauses an active cloned take.
         recording.recordingState = { .recording }
         events = []; fake = FakeWAVPlayer()
@@ -137,7 +144,8 @@ struct ApprovedAudioRecordingCheck {
         precondition(!tracking)
         fake = FakeWAVPlayer(); events = []; recording.beginInputIdleTracking = { false }
         await recording.start(audio: Data(), takeID: UUID())?.value
-        precondition(!fake.didPlay && recording.phase == "failed" && events.contains("ensurePaused"))
+        precondition(!fake.didPlay && recording.phase == "failed" && events.isEmpty,
+                     "Unavailable activity monitoring must block before sending a recorder command")
         recording.beginInputIdleTracking = { tracking = true; return true }
         recording.waitForInputIdle = { _ in .timedOut }
         fake = FakeWAVPlayer(); events = []

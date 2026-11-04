@@ -241,8 +241,18 @@ latency still applies. Existing cue sounds are reused before confirmed recording
 and after confirmed pause.
 
 Verified resume/pause requires an already active FocuSee recording session; it
-does not create a new capture. FocuSee is rechecked immediately before playback
-when **Ensure recording** is selected. The actual player's completion event starts
+does not create a new capture. Cloned takes use a separate fast state-confirmation
+path: current recorder controls are freshly read, the shortcut is sent once only
+from a confirmed opposite state, and confirmation polls until the target is
+observed (up to two seconds), without the macOS path's fixed 500 ms sleep. Recorder
+controls are cached by process/window identity, refreshed on each use, and
+rediscovered when invalid. Unknown states never cause a blind toggle. Editor
+playback controls are excluded. Existing macOS speech confirmation is unchanged.
+
+Activity monitoring and WAV preparation happen before resuming capture. With zero
+before-delay, playback uses the confirmation that just succeeded instead of
+scanning FocuSee a second time. A nonzero before-delay still requires a fresh state
+check afterward. The actual player's completion event starts
 the finishing sequence. Transcription never controls duration. The panel shows
 elapsed, remaining, and total audio time, preserving zero remaining while waiting
 for screen actions to finish. Each take snapshots its settings and audio bytes.
@@ -257,7 +267,13 @@ and bindings remain independent.
 Live playback progress is also written atomically to
 `~/Library/Application Support/local.clipboardreadermac/Runtime/approved-audio-recording.json`
 with a session ID, audio version ID, stage, and actual player elapsed/remaining/
-duration values. It contains no narration text. FocuSee command latency and enabled
+duration values. `timingEvents` records monotonic offsets for recorder checks,
+commands, confirmations, playback request, first observed running playhead
+(sampled every 100 ms), audio completion callback, and finishing actions. These
+are software observations, not measurements of captured video frames or audible
+speaker output. Critical start/stop transitions do not synchronously write the
+feedback file; heartbeat/final publication carries the trace.
+It contains no narration text. FocuSee command latency and enabled
 finishing waits can still produce lead-in or tail footage; exact saved-footage
 boundaries need a live recording test and are not guaranteed by these controls.
 
