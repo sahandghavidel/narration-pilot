@@ -43,6 +43,15 @@ struct ClonedClipboardAudioView: View {
                             .font(.caption).foregroundStyle(audio.selectedIsApproved ? Color.green : Color.secondary)
                         Button(audio.selectedIsApproved ? "Approved" : "Approve Selected Audio") { audio.approveSelected() }
                             .disabled(audio.isGenerating || audio.selectedIsApproved)
+                        Text(audio.selectedTranscriptionStatus).font(.caption).textSelection(.enabled)
+                        if audio.transcribingIDs.contains(take.id) {
+                            ProgressView().controlSize(.small)
+                        } else if audio.selectedIsApproved && audio.transcriptions[take.id] == nil {
+                            Button(audio.transcriptionErrors[take.id] == nil ? "Create Word Timings" : "Retry Transcription") {
+                                audio.transcribeApprovedAudio(take.id)
+                            }
+                            .disabled(audio.isGenerating)
+                        }
                         Text("\(take.voice.name) · \(take.duration.formatted(.number.precision(.fractionLength(1)))) seconds")
                             .font(.caption).foregroundStyle(.secondary)
                         Text(take.spokenText).font(.caption).lineLimit(3).textSelection(.enabled)

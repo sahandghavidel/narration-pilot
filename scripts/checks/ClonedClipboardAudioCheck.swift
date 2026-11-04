@@ -6,6 +6,9 @@ private final class FixtureState: @unchecked Sendable {
     var brokenAudio = false
     var postCount = 0
     var requestCount = 0
+    var transcriptionCount = 0
+    var transcriptionFails = false
+    var emptyTimings = false
     let voice = UltimateEditorVoice(id: "test-voice", name: "Test Voice", provider: "omnivoice-lora", language: "en", enabled: true)
 
     func response(_ request: URLRequest) throws -> (Int, Data) {
@@ -37,9 +40,30 @@ private final class FixtureState: @unchecked Sendable {
             return (200, Data(#"{"audioUrl":"https://fixture.invalid/audio.wav","generationParams":{"seed":123,"referencePresetId":"test-voice"}}"#.utf8))
         case "/audio.wav":
             return (200, brokenAudio ? Data("not audio".utf8) : Self.wav())
+        case "/api/transcribe-scene":
+            let body = try JSONSerialization.jsonObject(with: Self.bodyData(request)) as! [String: Any]
+            precondition(body["model"] as? String == "tiny")
+            precondition((body["scene_id"] as? String)?.hasPrefix("clipboard-") == true)
+            transcriptionCount += 1
+            if transcriptionFails { return (503, Data(#"{"error":"Fixture transcription failure"}"#.utf8)) }
+            if emptyTimings { return (200, Data(#"{"response":{"text":"Hello world.","segments":[]}}"#.utf8)) }
+            return (200, Data(#"{"response":{"text":"Hello world.","segments":[{"words":[{"word":"Hello","start":0,"end":0.04},{"word":"world.","start":0.04,"end":0.09}]}],"duration":0.1}}"#.utf8))
         default:
             return (404, Data())
         }
+    }
+
+    static func bodyData(_ request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open(); defer { stream.close() }
+        var data = Data(), buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        return data
     }
 
     static func wav() -> Data {
@@ -142,8 +166,11 @@ struct ClonedClipboardAudioCheck {
         var previewChecks = 0
         restored.macOSSpeechIsIdle = { previewChecks += 1; return previewChecks == 1 }
         restored.select(first.id)
-        restored.approveSelected()
+        FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.brokenAudio = false }
+        await restored.approveSelected()?.value
         precondition(restored.selectedIsApproved)
+        precondition(restored.transcriptions[first.id]?.words.count == 2)
+        precondition(restored.transcriptions[first.id]?.model == "tiny.en")
         let requests = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
         await restored.generate(clipboard: "[Different direction] Hello\n world.  ", voiceID: "test-voice")
         precondition(restored.selectedID == first.id && restored.takes.count == 2)
@@ -153,20 +180,50 @@ struct ClonedClipboardAudioCheck {
         await restored.generate(clipboard: "Hello world.", voiceID: "test-voice", forceNewVersion: true)
         precondition(restored.takes.count == 3 && !restored.selectedIsApproved)
         precondition(restored.approvedVersions[first.groupID] == first.id)
-        restored.approveSelected()
+        await restored.approveSelected()?.value
         let approved = restored.selectedTake!
         let reopened = ClonedClipboardAudioController(directory: folder, defaults: defaults, client: api)
         precondition(reopened.selectedIsApproved && reopened.selectedID == approved.id)
+        precondition(reopened.transcriptions[approved.id]?.words.count == 2)
         precondition(reopened.narrationGroups.count == 1 && reopened.selectedVersions.count == 3)
         precondition(ClipboardAudioGrouping.key(text: "Hello world!", voiceID: "test-voice") != first.groupID)
         precondition(ClipboardAudioGrouping.key(text: "hello world.", voiceID: "test-voice") != first.groupID)
         precondition(ClipboardAudioGrouping.key(text: "Hello world.", voiceID: "other-voice") != first.groupID)
+        // Matching bytes reuse saved timings without any network, even after restart.
+        let beforeCached = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
+        precondition(reopened.transcribeApprovedAudio(approved.id) == nil)
+        precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeCached)
+        let originalApproved = try Data(contentsOf: reopened.audioURL(for: approved))
+        var changed = originalApproved
+        changed[changed.count - 1] = 1
+        try changed.write(to: reopened.audioURL(for: approved), options: .atomic)
+        let transcribeCount = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.transcriptionCount }
+        await reopened.transcribeApprovedAudio(approved.id)?.value
+        precondition(reopened.transcriptions[approved.id] == nil)
+        precondition(reopened.transcriptionErrors[approved.id]?.contains("does not match") == true)
+        precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.transcriptionCount } == transcribeCount)
+        precondition(reopened.selectedIsApproved)
+        try originalApproved.write(to: reopened.audioURL(for: approved), options: .atomic)
+        try FileManager.default.removeItem(at: reopened.transcriptionURL(for: approved))
+        FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.transcriptionFails = true }
+        let retry = reopened.transcribeApprovedAudio(approved.id)
+        precondition(reopened.transcribeApprovedAudio(approved.id) == nil, "Duplicate transcription must be suppressed")
+        await retry?.value
+        precondition(reopened.transcriptionErrors[approved.id] != nil && reopened.selectedIsApproved)
+        precondition(!FileManager.default.fileExists(atPath: reopened.transcriptionURL(for: approved).path))
+        FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.transcriptionFails = false; FixtureProtocol.fixture.emptyTimings = true }
+        await reopened.transcribeApprovedAudio(approved.id)?.value
+        precondition(reopened.transcriptions[approved.id] == nil && reopened.selectedIsApproved)
+        FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.emptyTimings = false }
+        await reopened.transcribeApprovedAudio(approved.id)?.value
+        precondition(reopened.transcriptions[approved.id]?.words.count == 2 && reopened.transcriptionErrors[approved.id] == nil)
+        precondition(FileManager.default.fileExists(atPath: reopened.transcriptionURL(for: first).path))
         try FileManager.default.removeItem(at: reopened.audioURL(for: approved))
         reopened.recordingAllowsPreview = { true }
         let beforeMissing = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
         await reopened.generate(clipboard: "Hello world.", voiceID: "test-voice")
         precondition(reopened.message.contains("approved file is missing"))
         precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeMissing)
-        print("PASS: grouping, normalization, voice separation, approval/reapproval, zero-HTTP reuse, explicit regeneration, restart recovery, missing approved file, failure preservation, duplicate suppression; no real playback")
+        print("PASS: grouped approval/reuse plus Tiny.en timings, fingerprint invalidation, restart cache, failure/retry, empty timestamps, duplicate suppression and independent version caches; no real playback")
     }
 }

@@ -10,6 +10,44 @@ struct ClonedClipboardAudioClient: Sendable {
     var baseURL = URL(string: "http://localhost:9540")!
     var session = URLSession.shared
 
+    func transcribe(audio: Data, generationResponse: String, takeID: UUID,
+                    duration: TimeInterval) async throws -> ClipboardAudioTranscription {
+        struct Source: Decodable { let audioUrl: URL }
+        let source = try JSONDecoder().decode(Source.self, from: Data(generationResponse.utf8))
+        guard ["http", "https"].contains(source.audioUrl.scheme) else {
+            throw failure("The saved version has no usable source audio address.")
+        }
+        // The existing editor endpoint reads a media URL. Verify that its immutable
+        // generated WAV still matches our local file before requesting timings.
+        var download = URLRequest(url: source.audioUrl)
+        download.timeoutInterval = 30
+        download.cachePolicy = .reloadIgnoringLocalCacheData
+        let (remoteAudio, remoteResponse) = try await session.data(for: download)
+        try check(remoteResponse, data: remoteAudio)
+        let fingerprint = ClipboardAudioTranscription.fingerprint(audio)
+        guard ClipboardAudioTranscription.fingerprint(remoteAudio) == fingerprint else {
+            throw failure("The editor’s source audio does not match this local version. Timings were not saved.")
+        }
+        var transcription = request("api/transcribe-scene", timeout: 900)
+        transcription.httpMethod = "POST"
+        transcription.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        transcription.httpBody = try JSONSerialization.data(withJSONObject: [
+            "media_url": source.audioUrl.absoluteString, "model": "tiny", "scene_id": "clipboard-\(takeID.uuidString)",
+        ])
+        let (data, response) = try await session.data(for: transcription)
+        try check(response, data: data)
+        struct Segment: Decodable { let words: [ClipboardWordTiming]? }
+        struct Payload: Decodable { let text: String; let segments: [Segment] }
+        struct Result: Decodable { let response: Payload }
+        let result = try JSONDecoder().decode(Result.self, from: data).response
+        let saved = ClipboardAudioTranscription(schemaVersion: 1, model: "tiny.en", audioSHA256: fingerprint,
+            createdAt: Date(), text: result.text, duration: duration, words: result.segments.flatMap { $0.words ?? [] })
+        guard saved.hasValidTimings else {
+            throw failure("Tiny.en did not return usable word timings. Your approved audio is unchanged; retry transcription.")
+        }
+        return saved
+    }
+
     func generate(text: String, voiceID: String, requestID: UUID) async throws -> GeneratedClipboardAudio {
         struct Library: Decodable { let entries: [UltimateEditorVoice] }
         let (presets, presetResponse) = try await session.data(for: request("api/tts-audio-references", timeout: 15))

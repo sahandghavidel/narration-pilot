@@ -145,9 +145,10 @@ Copy one scene's narration and press **Command + Shift + G**, or click
 be changed with its recorder in that section. It always reads the clipboard,
 regardless of the script or typed-text input mode. Bracketed recording directions
 are skipped, as with normal speech. If this narration and voice already have an
-approved version, the shortcut previews that exact local WAV with no network
-request. Otherwise it generates and saves a new version using the selected
-English preset and its configured seed behavior. Repeated presses while preparing
+approved version, the shortcut previews that exact local WAV without regenerating
+audio. If no approved version exists, it generates and saves a new version using
+the selected English preset and its configured seed behavior. Saved word timings
+are reused when present. Repeated presses while preparing
 audio are ignored.
 
 Choose a **Saved narration** and **Version** to replay older audio without regeneration, use **Stop
@@ -167,6 +168,24 @@ and voice even if approval exists; it keeps the old approval until you approve a
 replacement. Incomplete saves are not shown; failed generations preserve earlier
 versions. A missing approved file reports an error instead of silently generating.
 
+Approval also starts **Tiny.en** transcription in the background. The existing
+editor endpoint `/api/transcribe-scene` is called with `model: "tiny"`. Each
+version's `transcription.json` stores the recognized text, word start/end times,
+model, actual WAV duration, creation time, and the audio's SHA-256 fingerprint.
+Approval is saved before transcription; a transcription failure never regenerates
+or unapproves audio. The panel shows **Transcribing**, **Timings ready**, or an
+error with **Retry Transcription**. Existing approved versions without timings
+offer **Create Word Timings**, and preparing approved audio also fills a missing
+cache. Duplicate transcription requests for a version are ignored.
+
+Matching, valid timings are reused across playback and restarts without any
+network request. A changed WAV invalidates its timings. New versions have their
+own independent caches. The editor's original MinIO audio must still be available
+for first-time transcription or retry: the client verifies that it matches the
+local WAV before asking the existing URL-based endpoint to transcribe it. It
+also rechecks the local fingerprint before atomically saving the result. Missing
+or mismatched source audio reports an error; saved playback remains available.
+
 Ultimate Video Editor must be running at `http://localhost:9540` for new generation;
 approved local audio can be reused while the editor is offline. Narration is
 sent only when generation is requested, through its existing
@@ -180,8 +199,18 @@ Generation and preview require macOS speech to be idle and FocuSee to be paused,
 stopped, or closed. Unknown recording state blocks preview. Preview is checked
 again after generation and stops if speech or recording becomes active. No
 recording shortcut is sent, no scene is advanced, and there is no fallback to
-macOS speech. Transcription and recording approved audio are not yet part of this
-feature.
+macOS speech. Recording approved audio is not yet part of this feature.
+
+### Planned approved-audio recording
+
+The approved WAV and its actual playback clock will control each take. Rehearse
+the actions against that file's duration, confirm FocuSee is recording, then play
+the file and expose elapsed and remaining playback time. Finish the actions before
+playback ends and leave the screen settled. Pause FocuSee on the player's
+completion event. Transcription is an optional phrase-timing guide and does not
+control recording duration. Scenes whose actions cannot comfortably fit should
+be adjusted or split before recording. FocuSee start/pause latency still needs
+measurement; this workflow does not yet guarantee gap-free recording boundaries.
 
 ### Shortcuts and recording triggers
 

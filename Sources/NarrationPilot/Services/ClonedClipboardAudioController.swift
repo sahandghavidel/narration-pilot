@@ -50,6 +50,9 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
     @Published private(set) var takes: [ClipboardAudioTake] = []
     @Published private(set) var selectedID: UUID?
     @Published private(set) var approvedVersions: [String: UUID] = [:]
+    @Published private(set) var transcriptions: [UUID: ClipboardAudioTranscription] = [:]
+    @Published private(set) var transcribingIDs: Set<UUID> = []
+    @Published private(set) var transcriptionErrors: [UUID: String] = [:]
     @Published private(set) var isGenerating = false
     @Published private(set) var isPreviewing = false
     @Published private(set) var message = "Copy one scene’s narration, then generate a cloned voice preview."
@@ -97,6 +100,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         takes = loaded.sorted { $0.createdAt > $1.createdAt }
         let savedID = defaults.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:))
         selectedID = takes.first(where: { $0.id == savedID })?.id ?? takes.first?.id
+        if let take = selectedTake { loadCachedTranscription(for: take) }
     }
 
     var selectedTake: ClipboardAudioTake? { takes.first { $0.id == selectedID } }
@@ -118,8 +122,9 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
             ?? takes.first(where: { $0.groupID == id }) { select(take.id) }
     }
 
-    func approveSelected() {
-        guard !isGenerating, let take = selectedTake else { return }
+    @discardableResult
+    func approveSelected() -> Task<Void, Never>? {
+        guard !isGenerating, let take = selectedTake else { return nil }
         do {
             let validation = try AVAudioPlayer(contentsOf: audioURL(for: take))
             guard validation.duration > 0 else { throw missingApprovedFile() }
@@ -127,7 +132,8 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
             try JSONEncoder().encode(state).write(to: groupURL(for: take).appendingPathComponent("group.json"), options: .atomic)
             approvedVersions[take.groupID] = take.id
             message = "Approved. This narration and voice will reuse this exact audio next time."
-        } catch { message = "Could not approve audio: \(error.localizedDescription)" }
+            return transcribeApprovedAudio(take.id)
+        } catch { message = "Could not approve audio: \(error.localizedDescription)"; return nil }
     }
 
     func select(_ id: UUID) {
@@ -135,6 +141,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         stopPreview()
         selectedID = id
         defaults.set(id.uuidString, forKey: Self.selectedKey)
+        if let take = selectedTake { loadCachedTranscription(for: take) }
     }
 
     func generateClipboard(forceNewVersion: Bool = false) {
@@ -171,9 +178,10 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
             if !forceNewVersion, let approvedID = approvedVersions[key] {
                 guard let approved = takes.first(where: { $0.id == approvedID && $0.groupID == key }),
                       FileManager.default.fileExists(atPath: audioURL(for: approved).path) else { throw missingApprovedFile() }
-                // Reuse is entirely local, including when the editor is offline.
+                // Audio reuse is local; missing timings can fill in the background.
                 select(approved.id)
                 message = "Reusing approved audio. No generation requested."
+                transcribeApprovedAudio(approved.id)
                 await previewSelected()
                 return
             }
@@ -270,6 +278,61 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
 
     func audioURL(for take: ClipboardAudioTake) -> URL {
         groupURL(for: take).appendingPathComponent("versions").appendingPathComponent(take.id.uuidString).appendingPathComponent("audio.wav")
+    }
+
+    var selectedTranscriptionStatus: String {
+        guard let take = selectedTake else { return "" }
+        if transcribingIDs.contains(take.id) { return "Transcribing with Tiny.en…" }
+        if let error = transcriptionErrors[take.id] { return "Transcription failed: \(error)" }
+        if let saved = transcriptions[take.id] { return "Timings ready · Tiny.en · \(saved.words.count) words" }
+        return selectedIsApproved ? "Word timings have not been saved yet." : "Approve this version to create word timings."
+    }
+
+    func transcriptionURL(for take: ClipboardAudioTake) -> URL {
+        audioURL(for: take).deletingLastPathComponent().appendingPathComponent("transcription.json")
+    }
+
+    private func loadCachedTranscription(for take: ClipboardAudioTake) {
+        guard let audio = try? Data(contentsOf: audioURL(for: take)),
+              let data = try? Data(contentsOf: transcriptionURL(for: take)),
+              let saved = try? JSONDecoder().decode(ClipboardAudioTranscription.self, from: data),
+              saved.hasValidTimings, saved.audioSHA256 == ClipboardAudioTranscription.fingerprint(audio) else {
+            transcriptions[take.id] = nil
+            return
+        }
+        transcriptions[take.id] = saved
+        transcriptionErrors[take.id] = nil
+    }
+
+    @discardableResult
+    func transcribeApprovedAudio(_ id: UUID) -> Task<Void, Never>? {
+        guard let take = takes.first(where: { $0.id == id }), approvedVersions[take.groupID] == id,
+              !transcribingIDs.contains(id) else { return nil }
+        loadCachedTranscription(for: take)
+        if transcriptions[id] != nil { return nil }
+        transcribingIDs.insert(id)
+        transcriptionErrors[id] = nil
+        return Task { [weak self] in
+            guard let self else { return }
+            defer { self.transcribingIDs.remove(id) }
+            do {
+                let audio = try Data(contentsOf: self.audioURL(for: take))
+                let validation = try AVAudioPlayer(data: audio)
+                let saved = try await self.client.transcribe(audio: audio, generationResponse: take.generationResponse,
+                    takeID: id, duration: validation.duration)
+                let currentAudio = try Data(contentsOf: self.audioURL(for: take))
+                guard saved.audioSHA256 == ClipboardAudioTranscription.fingerprint(currentAudio) else {
+                    throw NSError(domain: "ClonedClipboardAudio", code: 5, userInfo: [NSLocalizedDescriptionKey:
+                        "The local audio changed during transcription. Retry with the correct saved version."])
+                }
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                try encoder.encode(saved).write(to: self.transcriptionURL(for: take), options: .atomic)
+                self.transcriptions[id] = saved
+            } catch {
+                self.transcriptionErrors[id] = error.localizedDescription
+            }
+        }
     }
 
     private func groupURL(for take: ClipboardAudioTake) -> URL {
