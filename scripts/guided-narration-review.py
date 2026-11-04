@@ -113,13 +113,18 @@ def main():
                         or event.get('draft', {}).get('revision') != args.revision
                         or event.get('draft', {}).get('sessionID', '').lower() != session.lower()):
                     raise RuntimeError('Invalid decision event')
-                # Receipt processing must refer to the current revision, not an old event.
+                # Event files are committed before the status snapshot. Re-read
+                # after observing the event, and tolerate that publication gap.
+                current = ensure_live(root)
                 if (current.get('audioDecision' if args.stage == 'audio' else 'decision') or {}).get('id') == event['id']:
                     result = dict(event=event)
                     if args.ack:
                         result['receipt'] = send(root, session, 'acknowledge', event_id=event['id'])
                     break
-                raise RuntimeError('Decision exists but belongs to an older revision; it was not acknowledged')
+                if current.get('draft', {}).get('revision') != args.revision:
+                    raise RuntimeError('Decision belongs to an older revision; it was not acknowledged')
+                # The matching status may still be in flight. Keep waiting below
+                # rather than reporting a stale event or acknowledging the wrong one.
             if time.monotonic() >= deadline:
                 result = dict(waiting=True, sessionID=session, revision=args.revision, phase=current['phase'])
                 break
