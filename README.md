@@ -214,50 +214,67 @@ and starts cached word-timing creation in the background. The library's explicit
 shortcut retains its saved binding (Sahand's Command–Shift–R). macOS speech
 shortcuts are unchanged.
 
-### Guided narration review (wording only)
+### Guided narration and cloned-audio review
 
-**Guided Narration Review** is a separate, spoken wording-review stage. An active
-agent submits an exact draft; Narration Pilot announces "Review narration" and
-reads it with a separate instance of the existing macOS speech engine. It never
-changes the clipboard, generates cloned TTS, advances script scenes, or triggers
-FocuSee. Other app-owned speech/audio/recording must be idle; wording review does
-not require an active FocuSee session or its accessibility detector. Existing
-macOS speech behavior and shortcut preferences are unchanged.
+The guided session has two distinct review stages with the same configurable
+A/G shortcuts. Narration Pilot announces each stage through a separate instance
+of the existing macOS speech engine. Existing macOS speech behavior, voice/speed
+settings, and shortcuts are unchanged.
 
-During an active review, the existing audio approval shortcut (Sahand's
-Command–Shift–A) approves **wording**, and the regeneration shortcut
-(Command–Shift–G) requests **improved wording**. These keys are consumed even in
-locked/processing stages, so repeated presses cannot fall through to audio
-approval/generation. Prepare/record shortcuts wait until guided review ends.
-Outside guided review, all four audio shortcuts retain their existing behavior.
-The panel shows the exact draft, scene, revision, stage, decision receipt, replay,
-and **End Guided Review**. A blocked/interrupted read must be replayed before it
-can be approved. No speech automatically resumes after restart.
+1. The agent submits a draft. **Review narration** reads it using macOS speech.
+   Command–Shift–G requests improved wording from the active agent; a revision
+   must answer that exact improvement event. Command–Shift–A approves the wording.
+2. Wording approval automatically prepares and previews cloned audio by calling
+   the existing Ultimate Video Editor client directly. No clipboard change,
+   Command–Shift–T dispatch, or agent acknowledgment is required to start it.
+   Wording and the selected English voice are frozen for this audio review.
+   An existing approved match is reused locally; otherwise a new version is saved.
+3. **Review cloned audio** announces the stage, then plays the saved WAV.
+   Command–Shift–G stops that candidate and generates another version using the
+   same wording/voice, keeping previous versions and approvals. Command–Shift–A
+   approves the exact previewed version and creates a separate audio approval
+   event. Tiny.en word timings fill in the background; they do not delay approval.
 
-The local bridge lives under
+A/G presses during generation, spoken stage transitions, or locked decisions are
+consumed without approving a later stage or falling through to standalone audio
+commands. A candidate must actually start previewing before it becomes approvable.
+Changing clipboard text or library selection cannot change the approved guided
+wording or candidate. If the selected candidate was not the last audio previewed,
+replay the guided audio before approving it. No recording starts automatically.
+
+Wording review requires other app-owned speech/audio/recording to be idle but is
+independent of FocuSee's AX detector. Cloned-audio generation/preview retains the
+existing recorder-state and speech-idle checks. Failure keeps wording and previous
+audio approvals; use redo to retry. **Replay Saved Audio** replays a saved
+candidate without generation. Ending a session cancels its work and prevents a
+late response from starting playback. Restart restores saved state, never starts
+speech/network/playback automatically, and requires a replay or explicit redo.
+
+The panel shows narration revision, stage, frozen voice, candidate duration,
+approval status, replay and **End Guided Review**. Outside a guided session, the
+existing T/G/A/R audio shortcuts retain their standalone behavior. Existing
+wording-only approvals can continue through redo or **Generate Audio**.
+
+The private local bridge remains under
 `~/Library/Application Support/local.clipboardreadermac/GuidedNarrationReview/`:
-`commands/` and durable `receipts/`, one immutable decision in `events/` per
-session/revision, `acknowledgments/` for agent receipts, and a live `status.json`.
-Files are private to the current user. Commands expire after two minutes; decision
-events persist. An improved revision must reference the exact improvement event
-and increment its revision once. Approval locks the exact text. The agent must
-acknowledge the event and explicitly end review before audio shortcuts return.
-This is an active-session handshake; it does not wake an ended chat or run a
-background narration author.
-
-Use the local helper (no network or app activation):
+`commands/`, `receipts/`, narration `events/`, final `audio-events/`,
+`acknowledgments/`, and live `status.json`. Audio events contain the exact wording,
+voice, local audio version ID, duration, and generation attempt. Both kinds of
+approval are independently acknowledged. Commands expire after two minutes;
+decisions persist. This active-session bridge does not wake an ended chat.
 
 ```sh
 python3 scripts/guided-narration-review.py submit --scene-id calculator-test --text "Let's add twelve and eight."
 python3 scripts/guided-narration-review.py watch --session-id SESSION_UUID --revision 1 --ack --timeout 55
+# An improvement event can be answered with a new wording revision:
 python3 scripts/guided-narration-review.py submit --session-id SESSION_UUID --scene-id calculator-test --revision 2 --event-id IMPROVEMENT_EVENT_UUID --text "Click equals. The result is twenty."
+# Wording approval is intermediate; keep the session open through audio approval:
+python3 scripts/guided-narration-review.py watch --session-id SESSION_UUID --revision 2 --stage audio --ack --timeout 55
 python3 scripts/guided-narration-review.py end --session-id SESSION_UUID
 ```
 
-`submit` returns a command receipt and session ID; `watch` waits for a real user
-decision and optionally acknowledges it. `replay` and `status` support recovery.
-A waiting result is not approval. Future cloned-TTS generation can consume the
-approved event; this first implementation stops at narration approval.
+`submit` returns a receipt/session ID. A waiting result is not approval. Use
+`status`, `replay`, or `generate-audio` to resume a saved session explicitly.
 
 ### Approved audio recording
 

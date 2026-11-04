@@ -3371,6 +3371,26 @@ final class AppModel: ObservableObject {
                 .store(in: &self.guidedNarrationSpeechSubscriptions)
             speaker.speak(text: text, speedMultiplier: self.speedMultiplier, voiceIdentifier: self.selectedVoiceIdentifier)
         }
+        guidedNarrationReview.selectedAudioVoice = { [weak self] in
+            guard let self, let voice = UltimateEditorVoiceLibrary(defaults: self.defaults).selectedVoice else { return nil }
+            return GuidedAudioVoice(id: voice.id, name: voice.name)
+        }
+        guidedNarrationReview.prepareAudio = { [weak self] narration, voiceID, forceNewVersion, isCurrent in
+            guard let self else { throw CancellationError() }
+            let take = try await self.clonedClipboardAudio.prepareGuidedAudio(narration: narration, voiceID: voiceID,
+                forceNewVersion: forceNewVersion, isCurrent: isCurrent)
+            return GuidedPreparedAudio(versionID: take.id, duration: take.duration)
+        }
+        guidedNarrationReview.previewAudio = { [weak self] audio, isCurrent in
+            guard let self else { throw CancellationError() }
+            try await self.clonedClipboardAudio.previewGuidedAudio(takeID: audio.versionID, isCurrent: isCurrent)
+        }
+        guidedNarrationReview.approveAudioVersion = { [weak self] id, narration, voiceID in
+            guard let self else { throw CancellationError() }
+            // Approval persists synchronously; Tiny.en timings fill in separately.
+            try self.clonedClipboardAudio.approveGuidedAudio(takeID: id, narration: narration, voiceID: voiceID)
+        }
+        guidedNarrationReview.stopAudioPreview = { [weak self] id in self?.clonedClipboardAudio.stopGuidedPreview(takeID: id) }
         guidedNarrationReview.start()
     }
 

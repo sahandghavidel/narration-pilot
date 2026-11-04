@@ -71,6 +71,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
     private var previewTask: Task<Void, Never>?
     private var previewRevision = UUID()
     private var lastPreviewedID: UUID?
+    private var currentPreviewID: UUID?
     private static let selectedKey = "narrationPilot.clonedClipboard.selectedTake"
 
     init(directory: URL = ClonedClipboardAudioController.directory,
@@ -187,14 +188,76 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         guard !approvedRecordingIsActive() else { message = "Finish the cloned audio take before approving another version."; return nil }
         guard !selectedIsApproved else { message = "This audio is already approved for reuse."; return nil }
         do {
-            let validation = try AVAudioPlayer(contentsOf: audioURL(for: take))
-            guard validation.duration > 0 else { throw missingApprovedFile() }
-            let state = ClipboardAudioGroupState(narration: take.spokenText, voiceID: take.voice.id, approvedVersionID: take.id)
-            try JSONEncoder().encode(state).write(to: groupURL(for: take).appendingPathComponent("group.json"), options: .atomic)
-            approvedVersions[take.groupID] = take.id
-            message = "Approved. This narration and voice will reuse this exact audio next time."
-            return transcribeApprovedAudio(take.id)
+            return try persistApproval(for: take)
         } catch { message = "Could not approve audio: \(error.localizedDescription)"; return nil }
+    }
+
+    /// Approves the frozen guided candidate, regardless of library UI selection.
+    @discardableResult
+    func approveGuidedAudio(takeID: UUID, narration: String, voiceID: String) throws -> Task<Void, Never>? {
+        guard !isGenerating, !approvedRecordingIsActive() else { throw recordingError("Finish audio preparation or recording before approval.") }
+        guard let take = takes.first(where: { $0.id == takeID }),
+              Self.previewApprovalIssue(take: take, previewedID: lastPreviewedID, narration: narration, voiceID: voiceID) == nil else {
+            throw recordingError("Replay the matching guided audio before approving this version.")
+        }
+        return try persistApproval(for: take)
+    }
+
+    private func persistApproval(for take: ClipboardAudioTake) throws -> Task<Void, Never>? {
+        let validation = try AVAudioPlayer(contentsOf: audioURL(for: take))
+        guard validation.duration.isFinite, validation.duration > 0 else { throw missingApprovedFile() }
+        guard approvedVersions[take.groupID] != take.id else { message = "This audio is already approved for reuse."; return nil }
+        let state = ClipboardAudioGroupState(narration: take.spokenText, voiceID: take.voice.id, approvedVersionID: take.id)
+        try JSONEncoder().encode(state).write(to: groupURL(for: take).appendingPathComponent("group.json"), options: .atomic)
+        approvedVersions[take.groupID] = take.id
+        message = "Approved. This narration and voice will reuse this exact audio next time."
+        return transcribeApprovedAudio(take.id)
+    }
+
+    /// Calls the existing editor directly with frozen wording/voice; never reads
+    /// or writes the system clipboard and never starts playback implicitly.
+    func prepareGuidedAudio(narration: String, voiceID: String, forceNewVersion: Bool,
+                            isCurrent: @MainActor () -> Bool) async throws -> ClipboardAudioTake {
+        guard !isGenerating else { throw recordingError("Wait for current audio preparation to finish.") }
+        isGenerating = true
+        defer { isGenerating = false }
+        let text = SpokenTextSanitizer.preparingForSpeech(narration, includesBracketedDirections: false)
+        guard !text.isEmpty, text.count <= 12000 else { throw recordingError("Review one nonempty narration of up to 12,000 characters.") }
+        try Task.checkCancellation()
+        guard isCurrent() else { throw CancellationError() }
+        guard !approvedRecordingIsActive(), macOSSpeechIsIdle() else { throw recordingError("Finish other speech or recording before generating cloned audio.") }
+        guard await recordingAllowsPreview() else { throw recordingError("Pause FocuSee before generating a cloned preview. Its state must be known.") }
+        try Task.checkCancellation()
+        guard isCurrent() else { throw CancellationError() }
+        guard !approvedRecordingIsActive(), macOSSpeechIsIdle() else { throw recordingError("Other speech or recording became active.") }
+        let key = ClipboardAudioGrouping.key(text: text, voiceID: voiceID)
+        if !forceNewVersion, let approvedID = approvedVersions[key] {
+            guard let take = takes.first(where: { $0.id == approvedID && $0.groupID == key }) else { throw missingApprovedFile() }
+            let validation = try AVAudioPlayer(contentsOf: audioURL(for: take))
+            guard validation.duration.isFinite, validation.duration > 0 else { throw missingApprovedFile() }
+            message = "Reusing approved audio. No generation requested."
+            transcribeApprovedAudio(take.id)
+            return take
+        }
+        message = "Generating cloned audio for approved narration…"
+        let id = UUID()
+        let generated = try await client.generate(text: text, voiceID: voiceID, requestID: id)
+        try Task.checkCancellation()
+        guard isCurrent() else { throw CancellationError() }
+        let take = try save(generated, id: id, clipboard: narration, text: text)
+        takes.insert(take, at: 0)
+        message = "Saved new guided audio version."
+        return take
+    }
+
+    func previewGuidedAudio(takeID: UUID, isCurrent: @MainActor () -> Bool) async throws {
+        guard isCurrent(), let take = takes.first(where: { $0.id == takeID }) else { throw CancellationError() }
+        select(take.id)
+        try await playPreview(take, isCurrent: isCurrent)
+    }
+
+    func stopGuidedPreview(takeID: UUID?) {
+        if let takeID, currentPreviewID == takeID { stopPreview() }
     }
 
     func select(_ id: UUID) {
@@ -290,40 +353,41 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
     func previewSelected() async {
         guard let take = selectedTake else { return }
         guard !approvedRecordingIsActive() else { message = "Finish the cloned audio take before previewing another version."; return }
+        do { try await playPreview(take, isCurrent: { true }) }
+        catch is CancellationError { }
+        catch { message = "Preview failed: \(error.localizedDescription) The saved version is kept." }
+    }
+
+    private func playPreview(_ take: ClipboardAudioTake, isCurrent: @MainActor () -> Bool) async throws {
+        guard !approvedRecordingIsActive() else { throw recordingError("Finish the cloned audio take before previewing another version.") }
         stopPreview()
         let revision = previewRevision
         let recordingAllowed = await recordingAllowsPreview()
-        guard revision == previewRevision, selectedID == take.id else { return }
+        try Task.checkCancellation()
+        guard isCurrent(), revision == previewRevision, selectedID == take.id else { throw CancellationError() }
         guard macOSSpeechIsIdle(), recordingAllowed, !approvedRecordingIsActive() else {
-            message = "Audio is saved. Preview when macOS speech is idle and FocuSee is paused."
-            return
+            throw recordingError("Audio is saved. Preview when macOS speech is idle and FocuSee is paused.")
         }
-        do {
-            let player = try AVAudioPlayer(contentsOf: audioURL(for: take))
-            player.delegate = self
-            guard player.prepareToPlay(), player.play() else {
-                throw NSError(domain: "ClonedClipboardAudio", code: 3,
-                              userInfo: [NSLocalizedDescriptionKey: "The saved audio could not start playing."])
-            }
-            self.player = player
-            lastPreviewedID = take.id
-            isPreviewing = true
-            message = "Previewing \(selectedIsApproved ? "approved audio" : "cloned voice") · \(take.duration.formatted(.number.precision(.fractionLength(1)))) seconds"
-            previewTask = Task { [weak self] in
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(500))
-                    guard let self, !Task.isCancelled else { return }
-                    let recordingAllowed = await self.recordingAllowsPreview()
-                    guard !Task.isCancelled, self.previewRevision == revision else { return }
-                    guard self.macOSSpeechIsIdle(), recordingAllowed else {
-                        self.stopPreview()
-                        self.message = "Preview stopped because speech or recording became active. Audio is saved."
-                        return
-                    }
+        let player = try AVAudioPlayer(contentsOf: audioURL(for: take))
+        player.delegate = self
+        guard player.prepareToPlay(), player.play() else { throw recordingError("The saved audio could not start playing.") }
+        self.player = player
+        lastPreviewedID = take.id
+        currentPreviewID = take.id
+        isPreviewing = true
+        message = "Previewing \(approvedVersions[take.groupID] == take.id ? "approved audio" : "cloned voice") · \(take.duration.formatted(.number.precision(.fractionLength(1)))) seconds"
+        previewTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self, !Task.isCancelled else { return }
+                let recordingAllowed = await self.recordingAllowsPreview()
+                guard !Task.isCancelled, self.previewRevision == revision else { return }
+                guard self.macOSSpeechIsIdle(), recordingAllowed else {
+                    self.stopPreview()
+                    self.message = "Preview stopped because speech or recording became active. Audio is saved."
+                    return
                 }
             }
-        } catch {
-            message = "Preview failed: \(error.localizedDescription) The saved version is kept."
         }
     }
 
@@ -333,6 +397,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         previewTask = nil
         player?.stop()
         player = nil
+        currentPreviewID = nil
         if isPreviewing { message = "Cloned voice preview stopped. Audio is saved." }
         isPreviewing = false
     }

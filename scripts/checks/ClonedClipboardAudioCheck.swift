@@ -5,6 +5,7 @@ private final class FixtureState: @unchecked Sendable {
     let lock = NSLock()
     var brokenAudio = false
     var postCount = 0
+    var generatedTexts: [String] = []
     var requestCount = 0
     var transcriptionCount = 0
     var transcriptionFails = false
@@ -36,6 +37,7 @@ private final class FixtureState: @unchecked Sendable {
             precondition((body["sceneId"] as? String)?.hasPrefix("clipboard-") == true)
             precondition((body["ttsSettings"] as? [String: String])?["provider"] == voice.provider)
             precondition(body["videoId"] == nil)
+            generatedTexts.append(body["text"] as! String)
             postCount += 1
             return (200, Data(#"{"audioUrl":"https://fixture.invalid/audio.wav","generationParams":{"seed":123,"referencePresetId":"test-voice"}}"#.utf8))
         case "/audio.wav":
@@ -222,6 +224,35 @@ struct ClonedClipboardAudioCheck {
         reopened.select(first.id)
         let frozen = try reopened.approvedAudio(narration: "[Record] Hello\n world.", voiceID: "test-voice")
         precondition(frozen.take.id == approved.id && frozen.audio == originalApproved)
+        // Guided generation uses frozen arguments, not the clipboard or library selection.
+        reopened.recordingAllowsPreview = { true }
+        reopened.macOSSpeechIsIdle = { true }
+        let beforeGuided = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
+        let cachedGuided = try await reopened.prepareGuidedAudio(narration: "Hello world.", voiceID: "test-voice", forceNewVersion: false, isCurrent: { true })
+        precondition(cachedGuided.id == approved.id)
+        precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeGuided)
+        let selectionBeforeGuided = reopened.selectedID
+        let newGuided = try await reopened.prepareGuidedAudio(narration: "Frozen approved wording.", voiceID: "test-voice", forceNewVersion: true, isCurrent: { true })
+        precondition(newGuided.spokenText == "Frozen approved wording." && reopened.selectedID == selectionBeforeGuided)
+        precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.generatedTexts.last } == "Frozen approved wording.")
+        precondition(reopened.approvedVersions[approved.groupID] == approved.id, "Regeneration must retain the previous approval")
+        let requestsBeforeStale = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
+        var stillCurrent = true
+        reopened.recordingAllowsPreview = { stillCurrent = false; return true }
+        do {
+            _ = try await reopened.prepareGuidedAudio(narration: "Ended review.", voiceID: "test-voice", forceNewVersion: true, isCurrent: { stillCurrent })
+            preconditionFailure("An ended review must not start a request")
+        } catch is CancellationError { }
+        precondition(!reopened.isGenerating && FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == requestsBeforeStale)
+        do {
+            try await reopened.previewGuidedAudio(takeID: newGuided.id, isCurrent: { false })
+            preconditionFailure("An ended review must not start playback")
+        } catch is CancellationError { }
+        do {
+            _ = try reopened.approveGuidedAudio(takeID: newGuided.id, narration: "Frozen approved wording.", voiceID: "test-voice")
+            preconditionFailure("An unheard guided candidate must not be approved")
+        } catch { }
+        reopened.recordingAllowsPreview = { true }
         do {
             _ = try reopened.approvedAudio(narration: "Hello world.", voiceID: "unapproved-voice")
             preconditionFailure("Recording must not fall back to another voice")

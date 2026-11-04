@@ -81,10 +81,11 @@ def main():
     watch.add_argument('--revision', type=int, required=True)
     watch.add_argument('--timeout', type=float, default=55)
     watch.add_argument('--ack', action='store_true')
+    watch.add_argument('--stage', choices=['narration', 'audio'], default='narration')
     ack = commands.add_parser('acknowledge')
     ack.add_argument('--session-id', required=True)
     ack.add_argument('--event-id', required=True)
-    for name in ['replay', 'end']:
+    for name in ['replay', 'end', 'generate-audio']:
         command = commands.add_parser(name)
         command.add_argument('--session-id', required=True)
     args = parser.parse_args()
@@ -100,7 +101,7 @@ def main():
         if not 0 < args.timeout <= 60:
             raise RuntimeError('Watch timeout must be between 0 and 60 seconds; resume another bounded watch if needed')
         session = str(uuid.UUID(args.session_id))
-        path = root / 'events' / f'{session.lower()}-r{args.revision}.json'
+        path = root / ('audio-events' if args.stage == 'audio' else 'events') / f'{session.lower()}-r{args.revision}.json'
         deadline = time.monotonic() + args.timeout
         while True:
             current = ensure_live(root)
@@ -108,12 +109,12 @@ def main():
                 raise RuntimeError('The requested review session is no longer current')
             if path.exists():
                 event = load(path)
-                if (event.get('schemaVersion') != 1 or event.get('kind') not in ['approveNarration', 'improveNarration']
+                if (event.get('schemaVersion') != 1 or event.get('kind') not in (['approveAudio'] if args.stage == 'audio' else ['approveNarration', 'improveNarration'])
                         or event.get('draft', {}).get('revision') != args.revision
                         or event.get('draft', {}).get('sessionID', '').lower() != session.lower()):
                     raise RuntimeError('Invalid decision event')
                 # Receipt processing must refer to the current revision, not an old event.
-                if current.get('decision', {}).get('id') == event['id']:
+                if (current.get('audioDecision' if args.stage == 'audio' else 'decision') or {}).get('id') == event['id']:
                     result = dict(event=event)
                     if args.ack:
                         result['receipt'] = send(root, session, 'acknowledge', event_id=event['id'])
@@ -126,7 +127,7 @@ def main():
     elif args.command == 'acknowledge':
         result = send(root, args.session_id, 'acknowledge', event_id=args.event_id)
     else:
-        result = send(root, args.session_id, args.command)
+        result = send(root, args.session_id, 'generateAudio' if args.command == 'generate-audio' else args.command)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
