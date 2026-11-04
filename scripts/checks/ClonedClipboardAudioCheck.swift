@@ -5,10 +5,12 @@ private final class FixtureState: @unchecked Sendable {
     let lock = NSLock()
     var brokenAudio = false
     var postCount = 0
+    var requestCount = 0
     let voice = UltimateEditorVoice(id: "test-voice", name: "Test Voice", provider: "omnivoice-lora", language: "en", enabled: true)
 
     func response(_ request: URLRequest) throws -> (Int, Data) {
         lock.lock(); defer { lock.unlock() }
+        requestCount += 1
         switch request.url!.path {
         case "/api/tts-audio-references":
             return (200, try JSONEncoder().encode(["entries": [voice]]))
@@ -99,9 +101,12 @@ struct ClonedClipboardAudioCheck {
         precondition(!audio.isPreviewing && !audio.isGenerating)
         let original = try Data(contentsOf: audio.audioURL(for: first))
         idleChecks = 0
-        await audio.generate(clipboard: "Hello again.", voiceID: "test-voice")
+        await audio.generate(clipboard: "[New direction] Hello   world.", voiceID: "test-voice")
         precondition(audio.takes.count == 2)
         precondition(first.id != audio.selectedID)
+        precondition(audio.selectedTake!.groupID == first.groupID)
+        precondition(audio.audioURL(for: first).deletingLastPathComponent().deletingLastPathComponent()
+                     == audio.audioURL(for: audio.selectedTake!).deletingLastPathComponent().deletingLastPathComponent())
         let retained = try Data(contentsOf: audio.audioURL(for: first))
         precondition(retained == original)
         let selected = audio.selectedID
@@ -132,6 +137,36 @@ struct ClonedClipboardAudioCheck {
         await restored.generate(clipboard: "Duplicate", voiceID: "test-voice")
         await pending.value
         precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.postCount } == posts)
-        print("PASS: request contract, WAV validation, atomic version saves, restart recovery, failure preservation, recording/empty input guards, duplicate suppression; no real playback")
+        // Approval, local reuse without any HTTP, and deliberate regeneration.
+        restored.recordingAllowsPreview = { true }
+        var previewChecks = 0
+        restored.macOSSpeechIsIdle = { previewChecks += 1; return previewChecks == 1 }
+        restored.select(first.id)
+        restored.approveSelected()
+        precondition(restored.selectedIsApproved)
+        let requests = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
+        await restored.generate(clipboard: "[Different direction] Hello\n world.  ", voiceID: "test-voice")
+        precondition(restored.selectedID == first.id && restored.takes.count == 2)
+        precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == requests)
+        FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.brokenAudio = false }
+        previewChecks = 0
+        await restored.generate(clipboard: "Hello world.", voiceID: "test-voice", forceNewVersion: true)
+        precondition(restored.takes.count == 3 && !restored.selectedIsApproved)
+        precondition(restored.approvedVersions[first.groupID] == first.id)
+        restored.approveSelected()
+        let approved = restored.selectedTake!
+        let reopened = ClonedClipboardAudioController(directory: folder, defaults: defaults, client: api)
+        precondition(reopened.selectedIsApproved && reopened.selectedID == approved.id)
+        precondition(reopened.narrationGroups.count == 1 && reopened.selectedVersions.count == 3)
+        precondition(ClipboardAudioGrouping.key(text: "Hello world!", voiceID: "test-voice") != first.groupID)
+        precondition(ClipboardAudioGrouping.key(text: "hello world.", voiceID: "test-voice") != first.groupID)
+        precondition(ClipboardAudioGrouping.key(text: "Hello world.", voiceID: "other-voice") != first.groupID)
+        try FileManager.default.removeItem(at: reopened.audioURL(for: approved))
+        reopened.recordingAllowsPreview = { true }
+        let beforeMissing = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
+        await reopened.generate(clipboard: "Hello world.", voiceID: "test-voice")
+        precondition(reopened.message.contains("approved file is missing"))
+        precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeMissing)
+        print("PASS: grouping, normalization, voice separation, approval/reapproval, zero-HTTP reuse, explicit regeneration, restart recovery, missing approved file, failure preservation, duplicate suppression; no real playback")
     }
 }

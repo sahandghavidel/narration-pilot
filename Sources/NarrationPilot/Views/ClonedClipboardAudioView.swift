@@ -7,26 +7,42 @@ struct ClonedClipboardAudioView: View {
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                KeyboardShortcuts.Recorder("Generate & Preview Clipboard", name: .generateClonedClipboardAudio)
-                Button(audio.isGenerating ? "Generating cloned voice…" : "Generate & Preview Clipboard") {
+                KeyboardShortcuts.Recorder("Prepare & Preview Clipboard", name: .generateClonedClipboardAudio)
+                Button(audio.isGenerating ? "Preparing cloned voice…" : "Prepare & Preview Clipboard") {
                     audio.generateClipboard()
                 }
                 .disabled(audio.isGenerating)
+                Button("Generate New Version") { audio.generateClipboard(forceNewVersion: true) }
+                    .disabled(audio.isGenerating)
                 if audio.isGenerating { ProgressView().controlSize(.small) }
                 Text(audio.message).font(.caption).textSelection(.enabled)
 
                 if !audio.takes.isEmpty {
-                    Picker("Saved version", selection: Binding(
+                    Picker("Saved narration", selection: Binding(
+                        get: { audio.selectedTake?.groupID ?? audio.narrationGroups[0].groupID },
+                        set: { audio.selectGroup($0) }
+                    )) {
+                        ForEach(audio.narrationGroups) { take in
+                            Text("\(take.spokenText.prefix(50)) · \(take.voice.name)").tag(take.groupID)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .disabled(audio.isGenerating)
+                    Picker("Version", selection: Binding(
                         get: { audio.selectedID ?? audio.takes[0].id },
                         set: { audio.select($0) }
                     )) {
-                        ForEach(audio.takes) { take in
-                            Text(take.label).tag(take.id)
+                        ForEach(audio.selectedVersions) { take in
+                            Text("\(audio.approvedVersions[take.groupID] == take.id ? "✓ Approved · " : "")\(take.label)").tag(take.id)
                         }
                     }
                     .pickerStyle(.menu)
                     .disabled(audio.isGenerating)
                     if let take = audio.selectedTake {
+                        Text(audio.selectedIsApproved ? "Approved for reuse" : "This version is not approved")
+                            .font(.caption).foregroundStyle(audio.selectedIsApproved ? Color.green : Color.secondary)
+                        Button(audio.selectedIsApproved ? "Approved" : "Approve Selected Audio") { audio.approveSelected() }
+                            .disabled(audio.isGenerating || audio.selectedIsApproved)
                         Text("\(take.voice.name) · \(take.duration.formatted(.number.precision(.fractionLength(1)))) seconds")
                             .font(.caption).foregroundStyle(.secondary)
                         Text(take.spokenText).font(.caption).lineLimit(3).textSelection(.enabled)
@@ -39,7 +55,7 @@ struct ClonedClipboardAudioView: View {
                         Button("Show File") { audio.revealSelected() }
                     }
                 }
-                Text("Uses the English voice selected above. Saves every generation as a new version. Preview never starts FocuSee. macOS speech shortcuts keep their current behavior.")
+                Text("Prepare reuses approved audio for matching narration and voice. Otherwise it generates a version. Generate New Version always uses the current clipboard and voice, keeping the existing approval. Preview never starts FocuSee.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

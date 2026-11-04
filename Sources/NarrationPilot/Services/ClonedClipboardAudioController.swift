@@ -1,7 +1,30 @@
 import AppKit
 import AVFoundation
 import Combine
+import CryptoKit
 import Foundation
+
+enum ClipboardAudioGrouping {
+    static func key(text: String, voiceID: String) -> String {
+        let normalized = SpokenTextSanitizer.preparingForSpeech(text, includesBracketedDirections: false)
+        return SHA256.hash(data: Data("\(voiceID.utf8.count):\(voiceID)\(normalized)".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func folder(text: String, voiceID: String) -> String {
+        let normalized = SpokenTextSanitizer.preparingForSpeech(text, includesBracketedDirections: false)
+        let words = normalized.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }.joined(separator: "-")
+        let slug = String(words.prefix(40))
+        return "\(slug.isEmpty ? "narration" : slug)--\(key(text: normalized, voiceID: voiceID))"
+    }
+}
+
+private struct ClipboardAudioGroupState: Codable {
+    let narration: String
+    let voiceID: String
+    var approvedVersionID: UUID?
+}
 
 struct ClipboardAudioTake: Codable, Identifiable, Equatable {
     let id: UUID
@@ -11,6 +34,8 @@ struct ClipboardAudioTake: Codable, Identifiable, Equatable {
     let voice: UltimateEditorVoice
     let duration: TimeInterval
     let generationResponse: String
+
+    var groupID: String { ClipboardAudioGrouping.key(text: spokenText, voiceID: voice.id) }
 
     var label: String {
         "\(createdAt.formatted(date: .abbreviated, time: .standard)) · \(spokenText.prefix(45))"
@@ -24,6 +49,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
 
     @Published private(set) var takes: [ClipboardAudioTake] = []
     @Published private(set) var selectedID: UUID?
+    @Published private(set) var approvedVersions: [String: UUID] = [:]
     @Published private(set) var isGenerating = false
     @Published private(set) var isPreviewing = false
     @Published private(set) var message = "Copy one scene’s narration, then generate a cloned voice preview."
@@ -50,19 +76,59 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         super.init()
         let folders = (try? FileManager.default.contentsOfDirectory(at: directory,
             includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
-        takes = folders.compactMap { folder in
-            guard let folderID = UUID(uuidString: folder.lastPathComponent),
-                  let data = try? Data(contentsOf: folder.appendingPathComponent("metadata.json")),
-                  let take = try? JSONDecoder().decode(ClipboardAudioTake.self, from: data),
-                  take.id == folderID,
-                  FileManager.default.fileExists(atPath: folder.appendingPathComponent("audio.wav").path) else { return nil }
-            return take
-        }.sorted { $0.createdAt > $1.createdAt }
+        var loaded: [ClipboardAudioTake] = []
+        for folder in folders {
+            guard let data = try? Data(contentsOf: folder.appendingPathComponent("group.json")),
+                  let group = try? JSONDecoder().decode(ClipboardAudioGroupState.self, from: data),
+                  folder.lastPathComponent == ClipboardAudioGrouping.folder(text: group.narration, voiceID: group.voiceID) else { continue }
+            let key = ClipboardAudioGrouping.key(text: group.narration, voiceID: group.voiceID)
+            approvedVersions[key] = group.approvedVersionID
+            let versions = (try? FileManager.default.contentsOfDirectory(at: folder.appendingPathComponent("versions"),
+                includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
+            for version in versions {
+                guard let id = UUID(uuidString: version.lastPathComponent),
+                      let data = try? Data(contentsOf: version.appendingPathComponent("metadata.json")),
+                      let take = try? JSONDecoder().decode(ClipboardAudioTake.self, from: data),
+                      take.id == id, take.groupID == key,
+                      FileManager.default.fileExists(atPath: version.appendingPathComponent("audio.wav").path) else { continue }
+                loaded.append(take)
+            }
+        }
+        takes = loaded.sorted { $0.createdAt > $1.createdAt }
         let savedID = defaults.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:))
         selectedID = takes.first(where: { $0.id == savedID })?.id ?? takes.first?.id
     }
 
     var selectedTake: ClipboardAudioTake? { takes.first { $0.id == selectedID } }
+    var selectedIsApproved: Bool {
+        guard let take = selectedTake else { return false }
+        return approvedVersions[take.groupID] == take.id
+    }
+    var narrationGroups: [ClipboardAudioTake] {
+        var seen = Set<String>()
+        return takes.filter { seen.insert($0.groupID).inserted }
+    }
+    var selectedVersions: [ClipboardAudioTake] {
+        guard let take = selectedTake else { return [] }
+        return takes.filter { $0.groupID == take.groupID }
+    }
+
+    func selectGroup(_ id: String) {
+        if let take = takes.first(where: { $0.groupID == id && $0.id == approvedVersions[id] })
+            ?? takes.first(where: { $0.groupID == id }) { select(take.id) }
+    }
+
+    func approveSelected() {
+        guard !isGenerating, let take = selectedTake else { return }
+        do {
+            let validation = try AVAudioPlayer(contentsOf: audioURL(for: take))
+            guard validation.duration > 0 else { throw missingApprovedFile() }
+            let state = ClipboardAudioGroupState(narration: take.spokenText, voiceID: take.voice.id, approvedVersionID: take.id)
+            try JSONEncoder().encode(state).write(to: groupURL(for: take).appendingPathComponent("group.json"), options: .atomic)
+            approvedVersions[take.groupID] = take.id
+            message = "Approved. This narration and voice will reuse this exact audio next time."
+        } catch { message = "Could not approve audio: \(error.localizedDescription)" }
+    }
 
     func select(_ id: UUID) {
         guard takes.contains(where: { $0.id == id }) else { return }
@@ -71,7 +137,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         defaults.set(id.uuidString, forKey: Self.selectedKey)
     }
 
-    func generateClipboard() {
+    func generateClipboard(forceNewVersion: Bool = false) {
         guard !isGenerating else { return }
         let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
         guard let voice = UltimateEditorVoiceLibrary(defaults: defaults).selectedVoice else {
@@ -80,16 +146,16 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         }
         // Set synchronously so repeated shortcut events cannot enqueue another request.
         isGenerating = true
-        Task { await performGeneration(clipboard: clipboard, voiceID: voice.id) }
+        Task { await performGeneration(clipboard: clipboard, voiceID: voice.id, forceNewVersion: forceNewVersion) }
     }
 
-    func generate(clipboard: String, voiceID: String) async {
+    func generate(clipboard: String, voiceID: String, forceNewVersion: Bool = false) async {
         guard !isGenerating else { return }
         isGenerating = true
-        await performGeneration(clipboard: clipboard, voiceID: voiceID)
+        await performGeneration(clipboard: clipboard, voiceID: voiceID, forceNewVersion: forceNewVersion)
     }
 
-    private func performGeneration(clipboard: String, voiceID: String) async {
+    private func performGeneration(clipboard: String, voiceID: String, forceNewVersion: Bool) async {
         defer { isGenerating = false }
         let text = SpokenTextSanitizer.preparingForSpeech(clipboard, includesBracketedDirections: false)
         guard !text.isEmpty else { message = "Copy some narration text first."; return }
@@ -100,8 +166,18 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
             return
         }
         stopPreview()
-        message = "Generating cloned clipboard audio…"
         do {
+            let key = ClipboardAudioGrouping.key(text: text, voiceID: voiceID)
+            if !forceNewVersion, let approvedID = approvedVersions[key] {
+                guard let approved = takes.first(where: { $0.id == approvedID && $0.groupID == key }),
+                      FileManager.default.fileExists(atPath: audioURL(for: approved).path) else { throw missingApprovedFile() }
+                // Reuse is entirely local, including when the editor is offline.
+                select(approved.id)
+                message = "Reusing approved audio. No generation requested."
+                await previewSelected()
+                return
+            }
+            message = "Generating cloned clipboard audio…"
             let id = UUID()
             let generated = try await client.generate(text: text, voiceID: voiceID, requestID: id)
             message = "Saving cloned clipboard audio…"
@@ -123,13 +199,20 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         }
         let take = ClipboardAudioTake(id: id, createdAt: Date(), clipboardText: clipboard, spokenText: text,
             voice: generated.voice, duration: validation.duration, generationResponse: generated.responseJSON)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let staging = directory.appendingPathComponent(".\(id.uuidString).pending", isDirectory: true)
+        let group = groupURL(for: take)
+        let versions = group.appendingPathComponent("versions", isDirectory: true)
+        try FileManager.default.createDirectory(at: versions, withIntermediateDirectories: true)
+        let groupFile = group.appendingPathComponent("group.json")
+        if !FileManager.default.fileExists(atPath: groupFile.path) {
+            let state = ClipboardAudioGroupState(narration: text, voiceID: generated.voice.id)
+            try JSONEncoder().encode(state).write(to: groupFile, options: .atomic)
+        }
+        let staging = versions.appendingPathComponent(".\(id.uuidString).pending", isDirectory: true)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: staging) }
         try generated.audio.write(to: staging.appendingPathComponent("audio.wav"), options: .atomic)
         try JSONEncoder().encode(take).write(to: staging.appendingPathComponent("metadata.json"), options: .atomic)
-        try FileManager.default.moveItem(at: staging, to: directory.appendingPathComponent(id.uuidString, isDirectory: true))
+        try FileManager.default.moveItem(at: staging, to: versions.appendingPathComponent(id.uuidString, isDirectory: true))
         return take
     }
 
@@ -152,7 +235,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
             }
             self.player = player
             isPreviewing = true
-            message = "Previewing cloned voice · \(take.duration.formatted(.number.precision(.fractionLength(1)))) seconds"
+            message = "Previewing \(selectedIsApproved ? "approved audio" : "cloned voice") · \(take.duration.formatted(.number.precision(.fractionLength(1)))) seconds"
             previewTask = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(500))
@@ -186,7 +269,16 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
     }
 
     func audioURL(for take: ClipboardAudioTake) -> URL {
-        directory.appendingPathComponent(take.id.uuidString).appendingPathComponent("audio.wav")
+        groupURL(for: take).appendingPathComponent("versions").appendingPathComponent(take.id.uuidString).appendingPathComponent("audio.wav")
+    }
+
+    private func groupURL(for take: ClipboardAudioTake) -> URL {
+        directory.appendingPathComponent(ClipboardAudioGrouping.folder(text: take.spokenText, voiceID: take.voice.id), isDirectory: true)
+    }
+
+    private func missingApprovedFile() -> NSError {
+        NSError(domain: "ClonedClipboardAudio", code: 4, userInfo: [NSLocalizedDescriptionKey:
+            "The approved file is missing or unreadable. Use Generate New Version explicitly to replace it."])
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {

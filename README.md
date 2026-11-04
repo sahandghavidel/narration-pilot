@@ -141,22 +141,34 @@ speech shortcuts.
 ### Cloned clipboard audio
 
 Copy one scene's narration and press **Command + Shift + G**, or click
-**Generate & Preview Clipboard** under **Cloned Voice Audio**. The shortcut can
+**Prepare & Preview Clipboard** under **Cloned Voice Audio**. The shortcut can
 be changed with its recorder in that section. It always reads the clipboard,
 regardless of the script or typed-text input mode. Bracketed recording directions
-are skipped, as with normal speech. Each press generates a new version using the
-selected English preset and its configured seed behavior, saves it locally, and
-previews the saved WAV. Repeated presses during generation are ignored.
+are skipped, as with normal speech. If this narration and voice already have an
+approved version, the shortcut previews that exact local WAV with no network
+request. Otherwise it generates and saves a new version using the selected
+English preset and its configured seed behavior. Repeated presses while preparing
+audio are ignored.
 
-Choose a **Saved version** to replay older audio without regeneration, use **Stop
+Choose a **Saved narration** and **Version** to replay older audio without regeneration, use **Stop
 Preview** to stop only cloned audio, or **Show File** to reveal the WAV in Finder.
 Versions and their original clipboard text, spoken text, voice, measured duration,
 and generation response are retained across restarts under
 `~/Library/Application Support/local.clipboardreadermac/ClonedClipboardAudio/`.
-Each version has its own UUID folder with `audio.wav` and `metadata.json`.
-Incomplete saves are not shown; failed generations preserve earlier versions.
+Each narration/voice pair gets one readable folder ending in a SHA-256 key.
+Its `group.json` stores the approved version ID, and its `versions/<UUID>/`
+folders contain `audio.wav` and `metadata.json`. Matching removes bracketed
+directions and normalizes whitespace; case, punctuation, and wording remain
+significant. Different voice preset IDs always have separate folders and approvals.
 
-Ultimate Video Editor must be running at `http://localhost:9540`. Narration is
+Click **Approve Selected Audio** after reviewing a version. Approval survives
+restarts. **Generate New Version** explicitly generates from the current clipboard
+and voice even if approval exists; it keeps the old approval until you approve a
+replacement. Incomplete saves are not shown; failed generations preserve earlier
+versions. A missing approved file reports an error instead of silently generating.
+
+Ultimate Video Editor must be running at `http://localhost:9540` for new generation;
+approved local audio can be reused while the editor is offline. Narration is
 sent only when generation is requested, through its existing
 `/api/generate-tts-selected` route; generated audio uses the editor's configured
 MinIO storage before being downloaded locally. A `clipboard-<UUID>` scene label
@@ -168,8 +180,8 @@ Generation and preview require macOS speech to be idle and FocuSee to be paused,
 stopped, or closed. Unknown recording state blocks preview. Preview is checked
 again after generation and stops if speech or recording becomes active. No
 recording shortcut is sent, no scene is advanced, and there is no fallback to
-macOS speech. Approval, transcription, and recording approved audio are not yet
-part of this feature.
+macOS speech. Transcription and recording approved audio are not yet part of this
+feature.
 
 ### Shortcuts and recording triggers
 
