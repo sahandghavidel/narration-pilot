@@ -248,6 +248,11 @@ observed (up to two seconds), without the macOS path's fixed 500 ms sleep. Recor
 controls are cached by process/window identity, refreshed on each use, and
 rediscovered when invalid. Unknown states never cause a blind toggle. Editor
 playback controls are excluded. Existing macOS speech confirmation is unchanged.
+Discovery includes app-level floating recorder children as well as AXWindows.
+When fast discovery cannot recognize a state, a fresh read through the existing
+detector preserves compatibility instead of guessing or sending a toggle.
+A read-only startup warm-up primes controls and writes its observed state and PID
+to `Runtime/cloned-focusee-state.json` beside the recording diagnostics.
 
 Activity monitoring and WAV preparation happen before resuming capture. With zero
 before-delay, playback uses the confirmation that just succeeded instead of

@@ -24,6 +24,23 @@ final class ClonedFocuSeeControl {
         }
     }
 
+    /// Read-only warm-up before the user starts a take; also records which build
+    /// and process observed the state for support without sending a shortcut.
+    func prime() async {
+        let began = ProcessInfo.processInfo.systemUptime
+        let observed = await sample()
+        let payload: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
+            "observedState": String(describing: observed), "readOnly": true,
+            "probeMilliseconds": (ProcessInfo.processInfo.systemUptime - began) * 1000,
+            "updatedAt": ISO8601DateFormatter().string(from: Date())]
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/local.clipboardreadermac/Runtime/cloned-focusee-state.json")
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: .sortedKeys) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
     func ensure(_ target: FocuSeeRecordingState) async -> String? {
         guard target == .recording || target == .paused else { return "Unsupported recorder state." }
         let name = target == .recording ? "recording" : "paused"
@@ -59,17 +76,38 @@ private final class FastFocuSeeProbe: @unchecked Sendable {
     private var controls: [(AXUIElement, AXUIElement)] = [] // control, owning window
 
     func state() -> FocuSeeRecordingState {
+        let fast = fastState()
+        // Preserve the proven detector's coverage for FocuSee versions exposing
+        // floating recorder controls outside the fast roots. This is still a
+        // fresh read; it never assumes paused/recording or retries a toggle.
+        if fast == .unknown || fast == .notRecording {
+            return FocuSeeAccessibilityService().recordingState()
+        }
+        return fast
+    }
+
+    private func fastState() -> FocuSeeRecordingState {
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: FocuSeeAccessibilityService.bundleIdentifier).first else {
             clear(); return .notRunning
         }
         let root = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(root, 0.05)
-        guard let allWindows = value(kAXWindowsAttribute, root) as? [AXUIElement], !allWindows.isEmpty else {
-            clear(); return .unknown
-        }
+        let allWindows = value(kAXWindowsAttribute, root) as? [AXUIElement] ?? []
         // Editor playback controls must not be mistaken for recording controls.
         let freshWindows = allWindows.filter { (value(kAXTitleAttribute, $0) as? String)?.lowercased() != "edit" }
         var roots = freshWindows
+        // FocuSee's floating recorder can be an application-level accessibility
+        // child that is absent from AXWindows (e.g. its picker/system-dialog UI).
+        // The older detector traversed this path; keep that coverage here.
+        if let children = value(kAXChildrenAttribute, root) as? [AXUIElement] {
+            for child in children {
+                let role = value(kAXRoleAttribute, child) as? String
+                guard role != kAXMenuBarRole as String,
+                      (value(kAXTitleAttribute, child) as? String)?.lowercased() != "edit",
+                      !CFEqual(child, root), !roots.contains(where: { CFEqual($0, child) }) else { continue }
+                roots.append(child)
+            }
+        }
         if let menuValue = value(kAXMenuBarAttribute, root), CFGetTypeID(menuValue) == AXUIElementGetTypeID() {
             let menu = unsafeDowncast(menuValue, to: AXUIElement.self)
             if let children = value(kAXChildrenAttribute, menu) as? [AXUIElement] {
@@ -94,11 +132,14 @@ private final class FastFocuSeeProbe: @unchecked Sendable {
         let deadline = ProcessInfo.processInfo.systemUptime + 0.6
         var queue = roots.map { ($0, $0, 0) }
         var index = 0
+        var visited: [AXUIElement] = []
         var discovered: [(AXUIElement, AXUIElement)] = []
         var snapshots: [FocuSeeAccessibilityElementSnapshot] = []
         while index < queue.count {
             guard index < 600, ProcessInfo.processInfo.systemUptime < deadline else { controls = []; return .unknown }
             let (element, window, depth) = queue[index]; index += 1
+            if visited.contains(where: { CFEqual($0, element) }) { continue }
+            visited.append(element)
             if let snapshot = snapshot(element), isStateControl(snapshot) {
                 discovered.append((element, window)); snapshots.append(snapshot)
             }
@@ -116,7 +157,7 @@ private final class FastFocuSeeProbe: @unchecked Sendable {
             if let window = value(kAXWindowAttribute, control) { return CFEqual(window, root) }
         }
         var element = control
-        for _ in 0..<6 {
+        for _ in 0..<14 {
             if CFEqual(element, root) { return true }
             guard let parent = value(kAXParentAttribute, element), CFGetTypeID(parent) == AXUIElementGetTypeID() else { return false }
             element = unsafeDowncast(parent, to: AXUIElement.self)

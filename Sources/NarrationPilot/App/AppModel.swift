@@ -3337,6 +3337,7 @@ final class AppModel: ObservableObject {
             guard let self else { return .unknown }
             return await self.clonedFocuSeeControl.sample()
         }
+        Task { [weak self] in await self?.clonedFocuSeeControl.prime() }
         clonedClipboardAudio.approvedRecordingIsActive = { [weak self] in self?.approvedAudioRecording.isBusy ?? false }
         approvedAudioRecording.speechIsIdle = { [weak self] in
             guard let self else { return false }
