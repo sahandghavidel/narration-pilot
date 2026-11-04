@@ -220,7 +220,8 @@ shortcuts are unchanged.
 agent submits an exact draft; Narration Pilot announces "Review narration" and
 reads it with a separate instance of the existing macOS speech engine. It never
 changes the clipboard, generates cloned TTS, advances script scenes, or triggers
-FocuSee. Other speech/audio must be idle and FocuSee must allow review. Existing
+FocuSee. Other app-owned speech/audio/recording must be idle; wording review does
+not require an active FocuSee session or its accessibility detector. Existing
 macOS speech behavior and shortcut preferences are unchanged.
 
 During an active review, the existing audio approval shortcut (Sahand's

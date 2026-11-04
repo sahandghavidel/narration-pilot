@@ -3346,18 +3346,8 @@ final class AppModel: ObservableObject {
                   !self.clonedClipboardAudio.isPreviewing else {
                 return "Finish other speech, audio preview, or recording first, then replay this narration."
             }
-            guard ShortcutTriggerService.isAccessibilityTrusted else {
-                return "Restore Accessibility access, then replay this narration."
-            }
-            guard await self.clonedFocuSeeControl.sample().allowsSceneReview else {
-                return "Pause FocuSee, then replay this narration. Its state must be known."
-            }
-            // The AX lookup yields; recheck local activity before speaking.
-            guard self.speechState == .idle, self.pendingReadTask == nil, self.activeReadSequenceID == nil,
-                  !self.approvedAudioRecording.isBusy, !self.clonedClipboardAudio.isGenerating,
-                  !self.clonedClipboardAudio.isPreviewing else {
-                return "Other speech or audio became active. Replay this narration when idle."
-            }
+            // Wording review is independent of the recorder's AX state. The
+            // existing app-owned speech/audio/recording guards above still apply.
             return nil
         }
         guidedNarrationReview.stopSpeech = { [weak self] in
