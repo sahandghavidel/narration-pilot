@@ -214,6 +214,50 @@ and starts cached word-timing creation in the background. The library's explicit
 shortcut retains its saved binding (Sahand's Command–Shift–R). macOS speech
 shortcuts are unchanged.
 
+### Guided narration review (wording only)
+
+**Guided Narration Review** is a separate, spoken wording-review stage. An active
+agent submits an exact draft; Narration Pilot announces "Review narration" and
+reads it with a separate instance of the existing macOS speech engine. It never
+changes the clipboard, generates cloned TTS, advances script scenes, or triggers
+FocuSee. Other speech/audio must be idle and FocuSee must allow review. Existing
+macOS speech behavior and shortcut preferences are unchanged.
+
+During an active review, the existing audio approval shortcut (Sahand's
+Command–Shift–A) approves **wording**, and the regeneration shortcut
+(Command–Shift–G) requests **improved wording**. These keys are consumed even in
+locked/processing stages, so repeated presses cannot fall through to audio
+approval/generation. Prepare/record shortcuts wait until guided review ends.
+Outside guided review, all four audio shortcuts retain their existing behavior.
+The panel shows the exact draft, scene, revision, stage, decision receipt, replay,
+and **End Guided Review**. A blocked/interrupted read must be replayed before it
+can be approved. No speech automatically resumes after restart.
+
+The local bridge lives under
+`~/Library/Application Support/local.clipboardreadermac/GuidedNarrationReview/`:
+`commands/` and durable `receipts/`, one immutable decision in `events/` per
+session/revision, `acknowledgments/` for agent receipts, and a live `status.json`.
+Files are private to the current user. Commands expire after two minutes; decision
+events persist. An improved revision must reference the exact improvement event
+and increment its revision once. Approval locks the exact text. The agent must
+acknowledge the event and explicitly end review before audio shortcuts return.
+This is an active-session handshake; it does not wake an ended chat or run a
+background narration author.
+
+Use the local helper (no network or app activation):
+
+```sh
+python3 scripts/guided-narration-review.py submit --scene-id calculator-test --text "Let's add twelve and eight."
+python3 scripts/guided-narration-review.py watch --session-id SESSION_UUID --revision 1 --ack --timeout 55
+python3 scripts/guided-narration-review.py submit --session-id SESSION_UUID --scene-id calculator-test --revision 2 --event-id IMPROVEMENT_EVENT_UUID --text "Click equals. The result is twenty."
+python3 scripts/guided-narration-review.py end --session-id SESSION_UUID
+```
+
+`submit` returns a command receipt and session ID; `watch` waits for a real user
+decision and optionally acknowledges it. `replay` and `status` support recovery.
+A waiting result is not approval. Future cloned-TTS generation can consume the
+approved event; this first implementation stops at narration approval.
+
 ### Approved audio recording
 
 Under **Approved Audio Recording**, assign the separate **Shortcut** recorder or

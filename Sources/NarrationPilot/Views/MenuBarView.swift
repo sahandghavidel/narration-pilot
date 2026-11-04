@@ -39,6 +39,8 @@ struct MenuBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            GuidedNarrationReviewView(review: appModel.guidedNarrationReview)
+
             AgentFeedbackView(feedback: appModel.agentFeedback)
 
             DisclosureGroup("Input", isExpanded: $inputExpanded) {

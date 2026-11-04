@@ -13,6 +13,9 @@ final class AppModel: ObservableObject {
     let approvedAudioRecording = ApprovedAudioRecordingSession()
     private let clonedFocuSeeControl = ClonedFocuSeeControl()
     let agentFeedback = AgentFeedbackPublisher()
+    let guidedNarrationReview = GuidedNarrationReview()
+    private var guidedNarrationSpeech: TTSManager?
+    private var guidedNarrationSpeechSubscriptions = Set<AnyCancellable>()
 
     @Published private(set) var speechState: SpeechState = .idle
     @Published var statusMessage: String = SpeechState.idle.label
@@ -1077,6 +1080,7 @@ final class AppModel: ObservableObject {
         previewActivityPublisher.start()
         bindSpeechState()
         configureApprovedAudioRecording()
+        configureGuidedNarrationReview()
         agentFeedback.start { [weak self] in self?.refreshAgentFeedback() }
         registerShortcutHandlers()
         presenterOverlayController = PresenterOverlayController(appModel: self)
@@ -3318,6 +3322,10 @@ final class AppModel: ObservableObject {
     }
 
     func recordApprovedClipboardAudio() {
+        guard !guidedNarrationReview.active else {
+            statusMessage = "End guided narration review before recording approved audio."
+            return
+        }
         guard !approvedAudioRecording.isBusy else { return }
         guard speechState == .idle, pendingReadTask == nil, activeReadSequenceID == nil else {
             approvedAudioRecording.report("Wait for macOS speech and recording actions to finish first.")
@@ -3328,6 +3336,52 @@ final class AppModel: ObservableObject {
             clonedClipboardAudio.stopPreview()
             approvedAudioRecording.start(audio: prepared.audio, takeID: prepared.take.id)
         } catch { approvedAudioRecording.report(error.localizedDescription) }
+    }
+
+    private func configureGuidedNarrationReview() {
+        guidedNarrationReview.canSpeak = { [weak self] in
+            guard let self else { return "Narration Pilot is unavailable." }
+            guard self.speechState == .idle, self.pendingReadTask == nil, self.activeReadSequenceID == nil,
+                  !self.approvedAudioRecording.isBusy, !self.clonedClipboardAudio.isGenerating,
+                  !self.clonedClipboardAudio.isPreviewing else {
+                return "Finish other speech, audio preview, or recording first, then replay this narration."
+            }
+            guard ShortcutTriggerService.isAccessibilityTrusted else {
+                return "Restore Accessibility access, then replay this narration."
+            }
+            guard await self.clonedFocuSeeControl.sample().allowsSceneReview else {
+                return "Pause FocuSee, then replay this narration. Its state must be known."
+            }
+            // The AX lookup yields; recheck local activity before speaking.
+            guard self.speechState == .idle, self.pendingReadTask == nil, self.activeReadSequenceID == nil,
+                  !self.approvedAudioRecording.isBusy, !self.clonedClipboardAudio.isGenerating,
+                  !self.clonedClipboardAudio.isPreviewing else {
+                return "Other speech or audio became active. Replay this narration when idle."
+            }
+            return nil
+        }
+        guidedNarrationReview.stopSpeech = { [weak self] in
+            self?.guidedNarrationSpeechSubscriptions.removeAll()
+            self?.guidedNarrationSpeech?.stop()
+            self?.guidedNarrationSpeech = nil
+        }
+        guidedNarrationReview.speak = { [weak self] text, token in
+            guard let self else { return }
+            self.guidedNarrationSpeechSubscriptions.removeAll()
+            self.guidedNarrationSpeech?.stop()
+            // A separate instance per prompt prevents old completion callbacks
+            // from finishing a newer draft and never advances the loaded script.
+            let speaker = TTSManager()
+            self.guidedNarrationSpeech = speaker
+            speaker.$completedUtteranceCount.dropFirst().receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.guidedNarrationReview.speechFinished(token) }
+                .store(in: &self.guidedNarrationSpeechSubscriptions)
+            speaker.$failedUtteranceCount.dropFirst().receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.guidedNarrationReview.speechFailed(token) }
+                .store(in: &self.guidedNarrationSpeechSubscriptions)
+            speaker.speak(text: text, speedMultiplier: self.speedMultiplier, voiceIdentifier: self.selectedVoiceIdentifier)
+        }
+        guidedNarrationReview.start()
     }
 
     private func configureApprovedAudioRecording() {
@@ -3389,6 +3443,7 @@ final class AppModel: ObservableObject {
         clonedClipboardAudio.macOSSpeechIsIdle = { [weak self] in
             guard let self else { return false }
             return self.speechState == .idle && self.pendingReadTask == nil
+                && (self.guidedNarrationSpeech == nil || self.guidedNarrationSpeech?.state == .idle)
         }
         ttsManager.$failedUtteranceCount.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -3400,6 +3455,7 @@ final class AppModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 if state == .speaking {
+                    self?.guidedNarrationReview.interruptSpeech()
                     self?.clonedClipboardAudio.stopPreview()
                     self?.approvedAudioRecording.cancel(pauseRecording: false)
                 }
@@ -3622,6 +3678,7 @@ final class AppModel: ObservableObject {
     }
 
     func recoverAfterSessionResume() {
+        guidedNarrationReview.interruptSpeech()
         approvedAudioRecording.cancel()
         KeyboardShortcuts.disable(.recordApprovedClipboardAudio)
         KeyboardShortcuts.enable(.recordApprovedClipboardAudio)
@@ -3707,13 +3764,22 @@ final class AppModel: ObservableObject {
             Task { @MainActor in self?.recordApprovedClipboardAudio() }
         }
         KeyboardShortcuts.onKeyUp(for: .generateClonedClipboardAudio) { [weak self] in
-            Task { @MainActor in self?.clonedClipboardAudio.generateClipboard() }
+            Task { @MainActor in
+                guard let self, !self.guidedNarrationReview.active else { return }
+                self.clonedClipboardAudio.generateClipboard()
+            }
         }
         KeyboardShortcuts.onKeyUp(for: .approveClonedClipboardAudio) { [weak self] in
-            Task { @MainActor in self?.clonedClipboardAudio.approvePreviewedClipboard() }
+            Task { @MainActor in
+                guard let self else { return }
+                if !self.guidedNarrationReview.approve() { self.clonedClipboardAudio.approvePreviewedClipboard() }
+            }
         }
         KeyboardShortcuts.onKeyUp(for: .regenerateClonedClipboardAudio) { [weak self] in
-            Task { @MainActor in self?.clonedClipboardAudio.generateClipboard(forceNewVersion: true) }
+            Task { @MainActor in
+                guard let self else { return }
+                if !self.guidedNarrationReview.improve() { self.clonedClipboardAudio.generateClipboard(forceNewVersion: true) }
+            }
         }
         KeyboardShortcuts.onKeyUp(for: .copyCurrentSceneForAgent) { [weak self] in
             Task { @MainActor in self?.agentFeedback.copySnapshot() }
