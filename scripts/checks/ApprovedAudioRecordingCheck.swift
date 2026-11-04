@@ -34,6 +34,7 @@ struct ApprovedAudioRecordingCheck {
         let legacy = Data(#"{"before":"none","after":"ensurePaused","delayBefore":0.7,"delayAfter":0.2,"waitsForNeon":true,"waitsForInputIdle":false}"#.utf8)
         let migrated = try JSONDecoder().decode(ApprovedAudioRecordingSettings.self, from: legacy)
         precondition(migrated.before == .none && migrated.delayBefore == 0.7 && migrated.waitsForNeon && !migrated.waitsForInputIdle)
+        precondition(!migrated.fastMode)
         precondition(migrated.quietPeriod == 1 && migrated.keyboardQuietPeriod == 1 && migrated.maximumExtraWait == 10)
         var activity = ApprovedAudioIdleState(now: 100)
         precondition(activity.remaining(at: 110, quietPeriod: 1, keyboardQuietPeriod: 1) == 0,
@@ -154,8 +155,50 @@ struct ApprovedAudioRecordingCheck {
         fake.completion?(true)
         await limited.value
         precondition(recording.phase == "completed" && recording.message.contains("maximum extra") && !tracking)
+        // Fast mode: exactly one paused read, no verification after Resume or Pause.
+        recording.settings = .init(); recording.settings.fastMode = true
+        recording.settings.before = .none; recording.settings.after = .none
+        recording.settings.delayBefore = 10; recording.settings.delayAfter = 10
+        precondition(session().settings == recording.settings)
+        fake = FakeWAVPlayer(); events = []
+        var samples = 0
+        recording.recordingState = { samples += 1; events.append("pausedCheck"); return .paused }
+        recording.triggerFastToggle = { events.append("toggle"); return nil }
+        recording.performAction = { action in events.append("verified:" + action.rawValue); return nil }
+        recording.waitForInputIdle = { _ in events.append("idle"); return .idle }
+        fake.onPlay = { events.append("play") }
+        let fast = recording.start(audio: Data(), takeID: UUID())!
+        try await waitFor { fake.didPlay }
+        precondition(events == ["startCue", "pausedCheck", "toggle", "play"])
+        recording.settings.fastMode = false // A running take keeps its mode snapshot.
+        fake.completion?(true); await fast.value
+        precondition(samples == 1 && events == ["startCue", "pausedCheck", "toggle", "play", "idle", "toggle", "stopCue"])
+        precondition(recording.phase == "completed" && recording.message.contains("state not rechecked"))
+        recording.settings.fastMode = true
+        for state: FocuSeeRecordingState in [.recording, .unknown, .notRunning, .notRecording] {
+            fake = FakeWAVPlayer(); events = []
+            recording.recordingState = { state }
+            await recording.start(audio: Data(), takeID: UUID())?.value
+            precondition(!fake.didPlay && events == ["startCue"] && recording.phase == "failed")
+        }
+        recording.recordingState = { .paused }; events = []; fake = FakeWAVPlayer()
+        recording.triggerFastToggle = { "Shortcut unavailable" }
+        await recording.start(audio: Data(), takeID: UUID())?.value
+        precondition(!fake.didPlay && !events.contains("verified:ensurePaused"))
+        recording.triggerFastToggle = { events.append("toggle"); return nil }
+        events = []; fake = FakeWAVPlayer(); fake.playSucceeds = false
+        await recording.start(audio: Data(), takeID: UUID())?.value
+        precondition(recording.phase == "failed" && events.contains("verified:ensurePaused"))
+        events = []; fake = FakeWAVPlayer()
+        let fastCancelled = recording.start(audio: Data(), takeID: UUID())!
+        try await waitFor { fake.didPlay }; recording.cancel(); await fastCancelled.value
+        precondition(events.filter { $0 == "toggle" }.count == 1 && events.contains("verified:ensurePaused"))
+        events = []; fake = FakeWAVPlayer()
+        let fastTakeover = recording.start(audio: Data(), takeID: UUID())!
+        try await waitFor { fake.didPlay }; recording.cancel(pauseRecording: false); await fastTakeover.value
+        precondition(events.filter { $0 == "toggle" }.count == 1 && !events.contains("verified:ensurePaused"))
         recording.speechIsIdle = { false }; fake = FakeWAVPlayer(); events = []
         precondition(recording.start(audio: Data(), takeID: UUID()) == nil && !fake.didPlay && events.isEmpty)
-        print("PASS: activity during playback, immediate completion when already idle, late mouse/keyboard activity, explicit quiet periods, legacy settings migration, monitoring failure/timeout, plus recording lifecycle/cancellation; no recorder or real audio used")
+        print("PASS: fast-mode single precheck, direct toggles, refusal/cleanup/takeover and mode snapshot; activity during playback, immediate completion when already idle, late mouse/keyboard activity, explicit quiet periods, legacy settings migration, monitoring failure/timeout, plus recording lifecycle/cancellation; no recorder or real audio used")
     }
 }

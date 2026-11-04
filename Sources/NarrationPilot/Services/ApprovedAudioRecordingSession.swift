@@ -3,6 +3,7 @@ import Combine
 import Foundation
 
 struct ApprovedAudioRecordingSettings: Codable, Equatable {
+    var fastMode = false
     var before: ExternalTriggerAction = .ensureRecording
     var after: ExternalTriggerAction = .ensurePaused
     var delayBefore: Double = 0
@@ -15,11 +16,12 @@ struct ApprovedAudioRecordingSettings: Codable, Equatable {
 
     init() {}
     private enum CodingKeys: String, CodingKey {
-        case before, after, delayBefore, delayAfter, waitsForNeon, waitsForInputIdle
+        case fastMode, before, after, delayBefore, delayAfter, waitsForNeon, waitsForInputIdle
         case quietPeriod, keyboardQuietPeriod, maximumExtraWait
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        fastMode = try values.decodeIfPresent(Bool.self, forKey: .fastMode) ?? false
         before = try values.decodeIfPresent(ExternalTriggerAction.self, forKey: .before) ?? .ensureRecording
         after = try values.decodeIfPresent(ExternalTriggerAction.self, forKey: .after) ?? .ensurePaused
         delayBefore = try values.decodeIfPresent(Double.self, forKey: .delayBefore) ?? 0
@@ -76,6 +78,8 @@ final class ApprovedAudioRecordingSession: ObservableObject {
 
     var speechIsIdle: () -> Bool = { true }
     var performAction: (ExternalTriggerAction) async -> String? = { _ in "Recording actions are not connected." }
+    // Sends the configured toggle synchronously, without inspecting recorder state.
+    var triggerFastToggle: () -> String? = { "Fast recording is not connected." }
     var recordingState: () async -> FocuSeeRecordingState = {
         await Task.detached(priority: .utility) { FocuSeeAccessibilityService().recordingState() }.value
     }
@@ -101,6 +105,7 @@ final class ApprovedAudioRecordingSession: ObservableObject {
     private var takeID: UUID?
     private var sessionID: UUID?
     private let inputIdleMonitor = ApprovedAudioIdleMonitor()
+    private var activeFastMode = false
     private var idleWaitOutcome = "notRequested"
     private var timingEvents: [[String: Any]] = []
     private var startedAt: TimeInterval = 0
@@ -138,7 +143,17 @@ final class ApprovedAudioRecordingSession: ObservableObject {
             prepared.stop()
             report("The approved WAV has no playable duration."); return nil
         }
-        let configuration = settings.normalized
+        var configuration = settings.normalized
+        // Fast mode has a fixed resume/play/pause sequence. Preserve the user's
+        // verified-mode actions and delays in storage, but do not apply them here.
+        if configuration.fastMode {
+            configuration.before = .ensureRecording
+            configuration.after = .ensurePaused
+            configuration.delayBefore = 0
+            configuration.delayAfter = 0
+        }
+        let configurationSnapshot = configuration
+        activeFastMode = configuration.fastMode
         self.takeID = takeID
         sessionID = UUID()
         player = prepared
@@ -155,7 +170,7 @@ final class ApprovedAudioRecordingSession: ObservableObject {
             Task { @MainActor in self?.updateClock() }
         }
         if let timer { RunLoop.main.add(timer, forMode: .common) }
-        task = Task { [weak self] in
+        task = Task { [weak self, configuration = configurationSnapshot] in
             guard let self else { return }
             var mayNeedPause = false
             var trackingInput = false
@@ -185,9 +200,21 @@ final class ApprovedAudioRecordingSession: ObservableObject {
                 try Task.checkCancellation()
                 guard self.speechIsIdle() else { throw self.error("macOS speech became active before playback.") }
                 self.transition("starting", "Running the before-playback action…")
-                mayNeedPause = configuration.before == .ensureRecording || configuration.before == .toggle
-                if let error = await self.performAction(configuration.before) { throw self.error(error) }
-                self.recordTimingEvent("beforeActionConfirmed")
+                if configuration.fastMode {
+                    guard await self.recordingState() == .paused else {
+                        throw self.error("Fast mode requires FocuSee to be paused in an active recording session. No recording command was sent.")
+                    }
+                    self.recordTimingEvent("fastPausedPrecheckPassed")
+                    try Task.checkCancellation()
+                    guard self.speechIsIdle() else { throw self.error("macOS speech became active before playback.") }
+                    if let error = self.triggerFastToggle() { throw self.error(error) }
+                    mayNeedPause = true
+                    self.recordTimingEvent("fastResumeCommandSent")
+                } else {
+                    mayNeedPause = configuration.before == .ensureRecording || configuration.before == .toggle
+                    if let error = await self.performAction(configuration.before) { throw self.error(error) }
+                    self.recordTimingEvent("beforeActionConfirmed")
+                }
                 try Task.checkCancellation()
                 if configuration.before != .none, configuration.delayBefore > 0 {
                     self.transition("beforeDelay", "Waiting before WAV playback…")
@@ -232,13 +259,18 @@ final class ApprovedAudioRecordingSession: ObservableObject {
                 }
                 try Task.checkCancellation()
                 self.transition("finishing", "Running the after-playback action…")
-                if let error = await self.performAction(configuration.after) { throw self.error(error) }
-                self.recordTimingEvent("afterActionConfirmed")
+                if configuration.fastMode {
+                    if let error = self.triggerFastToggle() { throw self.error(error) }
+                    self.recordTimingEvent("fastPauseCommandSent")
+                } else {
+                    if let error = await self.performAction(configuration.after) { throw self.error(error) }
+                    self.recordTimingEvent("afterActionConfirmed")
+                }
                 if configuration.after == .ensurePaused { mayNeedPause = false; await self.stopCue() }
                 try Task.checkCancellation()
                 self.transition("completed", self.idleWaitOutcome == "maximumExtraWaitReached"
                     ? "Approved audio take completed. The maximum extra input wait was reached."
-                    : "Approved audio take completed.")
+                    : (configuration.fastMode ? "Approved audio finished. FocuSee pause command sent (Fast mode; state not rechecked)." : "Approved audio take completed."))
             } catch {
                 self.player?.stop()
                 let cancelled = Task.isCancelled
@@ -311,7 +343,7 @@ final class ApprovedAudioRecordingSession: ObservableObject {
             "pid": ProcessInfo.processInfo.processIdentifier, "sessionID": sessionID?.uuidString ?? "",
             "audioVersionID": takeID?.uuidString ?? "", "phase": phase, "busy": isBusy,
             "staleAfterSeconds": 1, "playbackRate": 1.0,
-            "idleWaitOutcome": idleWaitOutcome,
+            "idleWaitOutcome": idleWaitOutcome, "fastMode": activeFastMode,
             "timingEvents": timingEvents,
             "audioOutputDiagnostics": audioOutputDiagnostics,
             "elapsedSeconds": elapsed, "remainingSeconds": remaining, "durationSeconds": duration,

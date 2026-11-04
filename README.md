@@ -232,6 +232,18 @@ Neon waiting off, and input-idle waiting on. Cloned takes have visible, independ
 second by default, plus **Maximum extra idle wait** (10 seconds by default).
 Existing settings migrate without resetting recorder actions or delays.
 
+Enable **Fast mode** in Approved Audio Recording to use a single paused-state
+precheck. It requires FocuSee to be paused in an active recording session, sends
+Resume and immediately starts the prepared WAV without confirmation polling,
+then sends Pause after actual playback completion and the enabled Neon/input
+waits. Fast mode skips the before/after actions and explicit delays; their saved
+values are preserved for use when Fast mode is off. Leave FocuSee's recording
+state unchanged manually during a fast take, since the final toggle is not
+verified. Completion reports that the pause command was sent rather than claiming
+a confirmed paused state. Cancellation and failure retain verified-pause cleanup;
+macOS speech takeover still avoids sending a late pause into the speech workflow.
+Fast mode is off by default and persists independently of macOS speech settings.
+
 Activity monitoring starts before WAV playback and continues through any finishing
 delay or Neon wait. Inactivity already accumulated during playback counts: if the
 last second of the WAV is quiet, the player completion event does not start a new

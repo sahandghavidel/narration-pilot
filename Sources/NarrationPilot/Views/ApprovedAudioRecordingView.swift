@@ -23,17 +23,23 @@ struct ApprovedAudioRecordingView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         KeyboardShortcuts.Recorder("Shortcut", name: .recordApprovedClipboardAudio)
                         Text("Approved WAV · original playback speed (1.00x)").font(.caption).foregroundStyle(.secondary)
-                        actionPicker("Before playback", selection: $recording.settings.before)
-                        delayStepper("Delay before playback", value: $recording.settings.delayBefore)
-                            .disabled(recording.settings.before == .none)
-                        actionPicker("After playback", selection: $recording.settings.after)
-                        delayStepper("Delay after playback", value: $recording.settings.delayAfter)
-                            .disabled(recording.settings.after == .none)
+                        Toggle("Fast mode", isOn: $recording.settings.fastMode)
+                        if recording.settings.fastMode {
+                            Text("Checks FocuSee is paused once, sends Resume and plays immediately, then sends Pause after the WAV and enabled waits finish. No state confirmation during the take. Keep FocuSee's recording state unchanged manually.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        } else {
+                            actionPicker("Before playback", selection: $recording.settings.before)
+                            delayStepper("Delay before playback", value: $recording.settings.delayBefore)
+                                .disabled(recording.settings.before == .none)
+                            actionPicker("After playback", selection: $recording.settings.after)
+                            delayStepper("Delay after playback", value: $recording.settings.delayAfter)
+                                .disabled(recording.settings.after == .none)
+                        }
                         Toggle("Wait for Neon Spotlight before pausing FocuSee", isOn: $recording.settings.waitsForNeon)
-                            .disabled(recording.settings.after != .ensurePaused)
+                            .disabled(!recording.settings.fastMode && recording.settings.after != .ensurePaused)
                         Toggle("Wait until mouse and keyboard are idle", isOn: $recording.settings.waitsForInputIdle)
-                            .disabled(recording.settings.after != .ensurePaused)
-                        if recording.settings.waitsForInputIdle && recording.settings.after == .ensurePaused {
+                            .disabled(!recording.settings.fastMode && recording.settings.after != .ensurePaused)
+                        if recording.settings.waitsForInputIdle && (recording.settings.fastMode || recording.settings.after == .ensurePaused) {
                             Stepper("Mouse/activity quiet period: \(recording.settings.quietPeriod, specifier: "%.1f") seconds",
                                     value: $recording.settings.quietPeriod, in: 0.1...5, step: 0.1)
                             Stepper("Keyboard quiet period: \(recording.settings.keyboardQuietPeriod, specifier: "%.1f") seconds",
@@ -41,7 +47,7 @@ struct ApprovedAudioRecordingView: View {
                             Stepper("Maximum extra idle wait: \(recording.settings.maximumExtraWait, specifier: "%.1f") seconds",
                                     value: $recording.settings.maximumExtraWait, in: 1...30, step: 1)
                         }
-                        Text("Activity is tracked during playback. If already quiet when the WAV ends, there is no extra idle delay. Any after-playback delay or Neon Spotlight wait still applies.")
+                        Text("Activity is tracked during playback. If already quiet when the WAV ends, there is no extra idle delay. Neon Spotlight waiting still applies. Fast mode skips the before/after delay settings.")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     .font(.caption)

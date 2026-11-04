@@ -3344,6 +3344,16 @@ final class AppModel: ObservableObject {
             return self.speechState == .idle && self.pendingReadTask == nil
                 && self.activeReadSequenceID == nil && !self.clonedClipboardAudio.isGenerating
         }
+        approvedAudioRecording.triggerFastToggle = { [weak self] in
+            guard let self else { return "Narration Pilot is unavailable." }
+            guard let shortcut = self.recordingTriggerShortcut else {
+                return "Set the external FocuSee toggle shortcut first."
+            }
+            // The trigger checks Accessibility itself; avoid extra permission or
+            // recorder lookups between posting Resume and starting the WAV.
+            return self.shortcutTriggerService.trigger(shortcut) ? nil
+                : "Could not send the FocuSee shortcut. Check Accessibility permission."
+        }
         approvedAudioRecording.performAction = { [weak self] action in
             guard let self else { return "Narration Pilot is unavailable." }
             if action == .ensureRecording || action == .ensurePaused {
