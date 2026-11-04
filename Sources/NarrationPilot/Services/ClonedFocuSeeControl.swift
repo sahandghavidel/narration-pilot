@@ -6,10 +6,12 @@ import Foundation
 /// freshly observed opposite state; polling never retries a toggle.
 @MainActor
 final class ClonedFocuSeeControl {
-    var sample: () async -> FocuSeeRecordingState
+    var sample: () async -> FocuSeeRecordingState = { .unknown }
     var trigger: () -> Bool = { false }
     var event: (String) -> Void = { _ in }
     var timeout: TimeInterval = 2
+    private(set) var lastLookupPath = "notSampled"
+    private(set) var lastLookupMilliseconds: Double = 0
     private let probe: FastFocuSeeProbe
     private let queue = DispatchQueue(label: "narration-pilot.cloned-focusee-probe", qos: .userInitiated)
 
@@ -17,10 +19,19 @@ final class ClonedFocuSeeControl {
         let probe = FastFocuSeeProbe()
         self.probe = probe
         let queue = self.queue
-        sample = {
-            await withCheckedContinuation { continuation in
-                queue.async { continuation.resume(returning: probe.state()) }
+        sample = { [weak self] in
+            let reading: FocuSeeProbeReading = await withCheckedContinuation { continuation in
+                queue.async {
+                    let start = ProcessInfo.processInfo.systemUptime
+                    let state = probe.state()
+                    continuation.resume(returning: .init(state: state, path: probe.lastPath,
+                        milliseconds: (ProcessInfo.processInfo.systemUptime - start) * 1000))
+                }
             }
+            self?.lastLookupPath = reading.path
+            self?.lastLookupMilliseconds = reading.milliseconds
+            self?.event("focusee.lookup.\(reading.path).\(Int(reading.milliseconds))ms")
+            return reading.state
         }
     }
 
@@ -32,6 +43,7 @@ final class ClonedFocuSeeControl {
         let payload: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
             "observedState": String(describing: observed), "readOnly": true,
             "probeMilliseconds": (ProcessInfo.processInfo.systemUptime - began) * 1000,
+            "lookupPath": lastLookupPath,
             "updatedAt": ISO8601DateFormatter().string(from: Date())]
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/local.clipboardreadermac/Runtime/cloned-focusee-state.json")
@@ -68,22 +80,80 @@ final class ClonedFocuSeeControl {
     }
 }
 
+private struct FocuSeeProbeReading: Sendable {
+    let state: FocuSeeRecordingState
+    let path: String
+    let milliseconds: Double
+}
+
 /// Used exclusively on ClonedFocuSeeControl's serial queue. Cached controls are
 /// freshly read each time and discarded on PID/window changes or invalid AX data.
 private final class FastFocuSeeProbe: @unchecked Sendable {
     private var pid: pid_t?
     private var windows: [AXUIElement] = []
     private var controls: [(AXUIElement, AXUIElement)] = [] // control, owning window
+    private var compatibleEvidence: [FocuSeeRecordingEvidence] = []
+    private var evidencePID: pid_t?
+    private var evidenceScopes: [AXUIElement] = []
+    private(set) var lastPath = "notSampled"
 
     func state() -> FocuSeeRecordingState {
+        if let cached = evidenceState() { lastPath = "compatibleEvidenceCache"; return cached }
+        lastPath = "scopedDiscovery"
         let fast = fastState()
         // Preserve the proven detector's coverage for FocuSee versions exposing
         // floating recorder controls outside the fast roots. This is still a
         // fresh read; it never assumes paused/recording or retries a toggle.
         if fast == .unknown || fast == .notRecording {
-            return FocuSeeAccessibilityService().recordingState()
+            lastPath = "compatibleDiscovery"
+            let result = FocuSeeAccessibilityService().recordingStateAndEvidence()
+            if result.state == .paused || result.state == .recording {
+                compatibleEvidence = result.evidence
+                evidencePID = result.pid
+                evidenceScopes = result.scopes
+            }
+            return result.state
         }
         return fast
+    }
+
+    private func evidenceState() -> FocuSeeRecordingState? {
+        guard !compatibleEvidence.isEmpty else { return nil }
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: FocuSeeAccessibilityService.bundleIdentifier).first,
+              app.processIdentifier == evidencePID else {
+            compatibleEvidence = []; evidencePID = nil; return nil
+        }
+        let root = AXUIElementCreateApplication(app.processIdentifier)
+        let scopes = (value(kAXChildrenAttribute, root) as? [AXUIElement] ?? [])
+            + (value(kAXWindowsAttribute, root) as? [AXUIElement] ?? [])
+        guard sameElements(scopes, evidenceScopes) else { compatibleEvidence = []; return nil }
+        var snapshots: [FocuSeeAccessibilityElementSnapshot] = []
+        var checkedContainers: [AXUIElement] = []
+        for evidence in compatibleEvidence {
+            for container in evidence.containers where !checkedContainers.contains(where: { CFEqual($0, container.element) }) {
+                guard let children = value(kAXChildrenAttribute, container.element) as? [AXUIElement],
+                      sameElements(children, container.children) else { compatibleEvidence = []; return nil }
+                checkedContainers.append(container.element)
+            }
+            var actualPID: pid_t = 0
+            guard AXUIElementGetPid(evidence.element, &actualPID) == .success, actualPID == evidencePID,
+                  scopes.contains(where: { CFEqual($0, evidence.scope) }),
+                  value(kAXRoleAttribute, evidence.element) as? String == evidence.role,
+                  (value("AXHidden", evidence.element) as? Bool) != true else {
+                compatibleEvidence = []; return nil
+            }
+            let labels = evidence.attributes.compactMap { value($0, evidence.element) as? String }
+            guard labels.count == evidence.attributes.count else { compatibleEvidence = []; return nil }
+            let enabled = value(kAXEnabledAttribute, evidence.element) as? Bool ?? true
+            snapshots.append(.init(role: evidence.role, labels: labels, isEnabled: enabled))
+        }
+        let state = FocuSeeAccessibilityService.classify(isRunning: true, elements: snapshots)
+        guard state == .paused || state == .recording else { compatibleEvidence = []; return nil }
+        return state
+    }
+
+    private func sameElements(_ a: [AXUIElement], _ b: [AXUIElement]) -> Bool {
+        a.count == b.count && a.allSatisfy { item in b.contains { CFEqual(item, $0) } }
     }
 
     private func fastState() -> FocuSeeRecordingState {
@@ -127,7 +197,7 @@ private final class FastFocuSeeProbe: @unchecked Sendable {
                 }
                 fresh.append(snapshot)
             }
-            if !fresh.isEmpty { return FocuSeeAccessibilityService.classify(isRunning: true, elements: fresh) }
+            if !fresh.isEmpty { lastPath = "scopedControlCache"; return FocuSeeAccessibilityService.classify(isRunning: true, elements: fresh) }
         }
         let deadline = ProcessInfo.processInfo.systemUptime + 0.6
         var queue = roots.map { ($0, $0, 0) }

@@ -46,35 +46,16 @@ struct ApprovedAudioRecordingSettings: Codable, Equatable {
 protocol ApprovedAudioPlaying: AnyObject {
     var duration: TimeInterval { get }
     var currentTime: TimeInterval { get }
+    var clockSource: String { get }
+    var timingDiagnostics: [String: Double] { get }
     var completion: ((Bool) -> Void)? { get set }
     func play() -> Bool
     func stop()
 }
 
-@MainActor
-final class ApprovedWAVPlayer: NSObject, ApprovedAudioPlaying, AVAudioPlayerDelegate {
-    private let player: AVAudioPlayer
-    var completion: ((Bool) -> Void)?
-    var duration: TimeInterval { player.duration }
-    var currentTime: TimeInterval { player.currentTime }
-
-    init(audio: Data) throws {
-        player = try AVAudioPlayer(data: audio)
-        super.init()
-        player.delegate = self
-        guard player.duration.isFinite, player.duration > 0, player.prepareToPlay() else {
-            throw NSError(domain: "ApprovedAudioRecording", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "The approved WAV cannot be prepared for playback."])
-        }
-    }
-    func play() -> Bool { player.play() }
-    func stop() { player.stop() }
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor [weak self] in self?.completion?(flag) }
-    }
-    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-        Task { @MainActor [weak self] in self?.completion?(false) }
-    }
+extension ApprovedAudioPlaying {
+    var clockSource: String { "injectedPlayer.currentTime" }
+    var timingDiagnostics: [String: Double] { [:] }
 }
 
 /// Reuses the app's verified external actions and wait services, with WAV completion
@@ -124,6 +105,8 @@ final class ApprovedAudioRecordingSession: ObservableObject {
     private var timingEvents: [[String: Any]] = []
     private var startedAt: TimeInterval = 0
     private var sawAudioClockStart = false
+    private var audioClockSource = "notPrepared"
+    private var audioOutputDiagnostics: [String: Double] = [:]
 
     func recordTimingEvent(_ name: String) {
         guard isBusy else { return }
@@ -151,13 +134,18 @@ final class ApprovedAudioRecordingSession: ObservableObject {
         let prepared: any ApprovedAudioPlaying
         do { prepared = try makePlayer(audio) }
         catch { report(error.localizedDescription); return nil }
-        guard prepared.duration.isFinite, prepared.duration > 0 else { report("The approved WAV has no playable duration."); return nil }
+        guard prepared.duration.isFinite, prepared.duration > 0 else {
+            prepared.stop()
+            report("The approved WAV has no playable duration."); return nil
+        }
         let configuration = settings.normalized
         self.takeID = takeID
         sessionID = UUID()
         player = prepared
         elapsed = 0
         duration = prepared.duration
+        audioClockSource = prepared.clockSource
+        audioOutputDiagnostics = prepared.timingDiagnostics
         isBusy = true
         pauseOnCancel = true
         idleWaitOutcome = "notRequested"
@@ -325,8 +313,9 @@ final class ApprovedAudioRecordingSession: ObservableObject {
             "staleAfterSeconds": 1, "playbackRate": 1.0,
             "idleWaitOutcome": idleWaitOutcome,
             "timingEvents": timingEvents,
+            "audioOutputDiagnostics": audioOutputDiagnostics,
             "elapsedSeconds": elapsed, "remainingSeconds": remaining, "durationSeconds": duration,
-            "clockSource": "AVAudioPlayer.currentTime", "durationIsEstimate": false, "message": message]
+            "clockSource": audioClockSource, "durationIsEstimate": false, "message": message]
         do {
             try FileManager.default.createDirectory(at: feedbackURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]).write(to: feedbackURL, options: .atomic)

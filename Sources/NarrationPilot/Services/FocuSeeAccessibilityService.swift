@@ -23,6 +23,19 @@ struct FocuSeeAccessibilityElementSnapshot: Equatable {
     let isEnabled: Bool
 }
 
+struct FocuSeeRecordingEvidence {
+    let element: AXUIElement
+    let scope: AXUIElement
+    let role: String
+    let attributes: [String]
+    let containers: [FocuSeeEvidenceContainer]
+}
+
+struct FocuSeeEvidenceContainer {
+    let element: AXUIElement
+    let children: [AXUIElement]
+}
+
 struct FocuSeeAccessibilityService {
     static let bundleIdentifier = "com.imobie.FocuSee"
 
@@ -36,6 +49,49 @@ struct FocuSeeAccessibilityService {
         let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
         let snapshots = accessibilitySnapshots(from: applicationElement)
         return Self.classify(isRunning: true, elements: snapshots)
+    }
+
+    /// Opt-in evidence capture for cloned recording. The existing speech lookup
+    /// keeps its unchanged traversal and classification behavior.
+    func recordingStateAndEvidence() -> (state: FocuSeeRecordingState, pid: pid_t?, evidence: [FocuSeeRecordingEvidence], scopes: [AXUIElement]) {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).first else {
+            return (.notRunning, nil, [], [])
+        }
+        let root = AXUIElementCreateApplication(app.processIdentifier)
+        let scopes = (copyElements(kAXChildrenAttribute, from: root) ?? []) + (copyElements(kAXWindowsAttribute, from: root) ?? [])
+        var evidence: [FocuSeeRecordingEvidence] = []
+        var canCache = true
+        let snapshots = accessibilitySnapshots(from: root) { element, snapshot in
+            let action = [kAXButtonRole as String, kAXMenuItemRole as String].contains(snapshot.role) && snapshot.isEnabled
+            guard snapshot.labels.contains(where: { label in
+                let value = Self.normalize(label)
+                return Self.recordingStatusLabels.contains(value) || Self.pausedStatusLabels.contains(value)
+                    || (action && (Self.pauseActionLabels.contains(value) || Self.resumeActionLabels.contains(value)))
+            }) else { return }
+            let names = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute, kAXValueAttribute, kAXIdentifierAttribute].filter { attribute in
+                guard let label = copyString(attribute, from: element) else { return false }
+                let labelValue = Self.normalize(label)
+                return Self.recordingStatusLabels.contains(labelValue) || Self.pausedStatusLabels.contains(labelValue)
+                    || (action && (Self.pauseActionLabels.contains(labelValue) || Self.resumeActionLabels.contains(labelValue)))
+            }
+            guard !names.isEmpty else { return }
+            var ancestor = element
+            var containers: [FocuSeeEvidenceContainer] = []
+            for _ in 0..<20 {
+                if let scope = scopes.first(where: { CFEqual($0, ancestor) }) {
+                    if !evidence.contains(where: { CFEqual($0.element, element) }) {
+                        evidence.append(.init(element: element, scope: scope, role: snapshot.role, attributes: names, containers: containers))
+                    }
+                    return
+                }
+                guard let parent = copyElement(kAXParentAttribute, from: ancestor) else { break }
+                guard let children = copyElements(kAXChildrenAttribute, from: parent), children.contains(where: { CFEqual($0, ancestor) }) else { break }
+                containers.append(.init(element: parent, children: children))
+                ancestor = parent
+            }
+            canCache = false
+        }
+        return (Self.classify(isRunning: true, elements: snapshots), app.processIdentifier, canCache ? evidence : [], scopes)
     }
 
     static func classify(
@@ -91,7 +147,8 @@ struct FocuSeeAccessibilityService {
     }
 
     private func accessibilitySnapshots(
-        from root: AXUIElement
+        from root: AXUIElement,
+        visit: ((AXUIElement, FocuSeeAccessibilityElementSnapshot) -> Void)? = nil
     ) -> [FocuSeeAccessibilityElementSnapshot] {
         var snapshots: [FocuSeeAccessibilityElementSnapshot] = []
         var queue: [(element: AXUIElement, depth: Int)] = [(root, 0)]
@@ -103,6 +160,7 @@ struct FocuSeeAccessibilityService {
 
             if let snapshot = snapshot(for: current.element) {
                 snapshots.append(snapshot)
+                visit?(current.element, snapshot)
             }
 
             guard current.depth < 14 else {

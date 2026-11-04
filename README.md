@@ -214,6 +214,15 @@ unreadable audio, or active macOS speech prevents the take. No generation,
 transcription, scene navigation, or speech synthesis is performed during this
 operation. Original WAV speed is fixed at 1.00x.
 
+Cloned recording decodes the approved WAV to PCM before any recorder action and
+prepares an output-only AVAudioEngine/AVAudioPlayerNode. The output graph stays
+warm between takes and pauses after 30 seconds of inactivity; no audio is played
+during warm-up. Playback progress comes from the node's sample timeline, and the
+finishing action uses its `dataPlayedBack` completion, never an early rendered/
+consumed callback or guessed duration subtraction. Stopping invalidates pending
+callbacks, and an audio-engine interruption fails the take safely. macOS speech
+and library preview continue using their original engines.
+
 The settings mirror the existing clipboard speech shortcuts: **Before playback**,
 **After playback**, independent 0–10 second delays, optional **Wait for Neon
 Spotlight**, and **Wait until mouse and keyboard are idle**. Defaults are verified
@@ -251,6 +260,12 @@ playback controls are excluded. Existing macOS speech confirmation is unchanged.
 Discovery includes app-level floating recorder children as well as AXWindows.
 When fast discovery cannot recognize a state, a fresh read through the existing
 detector preserves compatibility instead of guessing or sending a toggle.
+Compatible discovery captures the exact AX attributes that supplied its state
+evidence. Later samples reread those attributes instead of traversing the whole
+interface, validating process identity, roles, visibility, live scopes, and the
+ancestor/child topology first. Changed or invalid evidence forces rediscovery.
+Both cached paths still classify fresh values and never toggle from a remembered
+recording state.
 A read-only startup warm-up primes controls and writes its observed state and PID
 to `Runtime/cloned-focusee-state.json` beside the recording diagnostics.
 
@@ -278,6 +293,11 @@ commands, confirmations, playback request, first observed running playhead
 are software observations, not measurements of captured video frames or audible
 speaker output. Critical start/stop transitions do not synchronously write the
 feedback file; heartbeat/final publication carries the trace.
+Lookup events include the path (`compatibleEvidenceCache`, scoped cache, or
+discovery) and elapsed milliseconds. `audioOutputDiagnostics` records preparation
+time, whether the output graph was warm, and the audio system's reported output/
+device latency. Those latency values are diagnostics, not capture offsets used
+to pause early; actual recorder/output behavior still needs a saved-footage test.
 It contains no narration text. FocuSee command latency and enabled
 finishing waits can still produce lead-in or tail footage; exact saved-footage
 boundaries need a live recording test and are not guaranteed by these controls.

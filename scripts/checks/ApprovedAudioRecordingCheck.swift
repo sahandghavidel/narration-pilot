@@ -79,7 +79,7 @@ struct ApprovedAudioRecordingCheck {
         precondition(abs(recording.elapsed - 0.4) < 0.001 && abs(recording.remaining - 0.85) < 0.001)
         let feedback = try JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("status.json"))) as! [String: Any]
         precondition(feedback["durationIsEstimate"] as? Bool == false)
-        precondition(feedback["clockSource"] as? String == "AVAudioPlayer.currentTime")
+        precondition(feedback["clockSource"] as? String == fake.clockSource)
         precondition(!events.contains("ensurePaused"), "Recording must not finish before player completion")
         // Settings are snapshotted per take; editing them cannot alter an in-flight finishing action.
         recording.settings.after = .none
