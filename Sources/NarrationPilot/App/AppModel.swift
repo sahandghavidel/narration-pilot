@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class AppModel: ObservableObject {
     static let shared = AppModel()
+    let clonedClipboardAudio = ClonedClipboardAudioController()
 
     @Published private(set) var speechState: SpeechState = .idle
     @Published var statusMessage: String = SpeechState.idle.label
@@ -3303,9 +3304,14 @@ final class AppModel: ObservableObject {
     }
 
     private func bindSpeechState() {
+        clonedClipboardAudio.macOSSpeechIsIdle = { [weak self] in
+            guard let self else { return false }
+            return self.speechState == .idle && self.pendingReadTask == nil
+        }
         ttsManager.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
+                if state == .speaking { self?.clonedClipboardAudio.stopPreview() }
                 self?.speechState = state
                 self?.previewActivityPublisher.update(speaking: state == .speaking)
                 self?.persistExternalSpeechState(state)
@@ -3491,6 +3497,8 @@ final class AppModel: ObservableObject {
     }
 
     func recoverAfterSessionResume() {
+        KeyboardShortcuts.disable(.generateClonedClipboardAudio)
+        KeyboardShortcuts.enable(.generateClonedClipboardAudio)
         mouseShortcutService?.stop()
         startMouseShortcuts()
         let names: [KeyboardShortcuts.Name] = [.readClipboard, .readCurrentInputSecondary, .readClipboardAlways, .readClipboardAlwaysSecondary, .readClipboardAlwaysTertiary, .stopReading, .pauseResumeReading, .replayScriptScene, .replayOnScreenOnly, .replayCodeOnly, .previousScriptScene, .nextScriptScene, .restartScript, .togglePresenterOverlay, .editCurrentScene, .openFocusAndPlaySceneManager, .ensureFocuSeeRecording, .ensureFocuSeePaused]
@@ -3563,6 +3571,9 @@ final class AppModel: ObservableObject {
     }
 
     private func registerShortcutHandlers() {
+        KeyboardShortcuts.onKeyUp(for: .generateClonedClipboardAudio) { [weak self] in
+            Task { @MainActor in self?.clonedClipboardAudio.generateClipboard() }
+        }
         KeyboardShortcuts.onKeyUp(for: .readClipboard) { [weak self] in
             Task { @MainActor in
                 guard let self else {

@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-struct UltimateEditorVoice: Codable, Identifiable, Equatable {
+struct UltimateEditorVoice: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let name: String
     let provider: String

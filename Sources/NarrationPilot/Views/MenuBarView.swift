@@ -325,6 +325,8 @@ struct MenuBarView: View {
 
             UltimateEditorVoiceView()
 
+            ClonedClipboardAudioView(audio: appModel.clonedClipboardAudio)
+
             DisclosureGroup("Speech settings", isExpanded: $speechSettingsExpanded) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Read Speed: \(appModel.speedMultiplier, specifier: "%.2f")x")

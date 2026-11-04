@@ -49,7 +49,7 @@ struct UltimateEditorVoiceView: View {
                         .foregroundStyle(.orange)
                 }
 
-                Text("This choice is saved for scene audio generation. Current playback still uses the macOS voice in Speech settings below.")
+                Text("Used by Cloned Voice Audio below. Existing macOS playback uses the voice in Speech settings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

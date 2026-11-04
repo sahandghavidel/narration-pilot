@@ -1,6 +1,11 @@
 @preconcurrency import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
+    static let generateClonedClipboardAudio = Self(
+        "generateClonedClipboardAudio",
+        default: KeyboardShortcuts.Shortcut(.g, modifiers: [.command, .shift])
+    )
+
     static let readClipboard = Self(
         "readClipboard",
         default: KeyboardShortcuts.Shortcut(.r, modifiers: [.command, .option])

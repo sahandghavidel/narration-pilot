@@ -31,6 +31,7 @@ Traditional text-to-speech tools read a whole document. Narration Pilot treats a
 | **Global shortcuts** | Two current-input shortcuts and three always-read-clipboard shortcuts, each with its own speech speed |
 | **Recording automation** | Verified FocuSee actions, independent delays, optional cue sounds, and Neon Spotlight fade-out waiting |
 | **Speech controls** | macOS voices, adjustable rate, pause, resume, stop, and replay |
+| **Cloned clipboard audio** | Generate, save, and preview individual clipboard passages using Ultimate Video Editor English voice presets; retain earlier versions |
 | **Input choices** | Read the clipboard, entered text, or a scene-based script |
 | **Privacy** | Local-first operation with no analytics, accounts, advertising, or project-owned cloud storage |
 
@@ -133,10 +134,42 @@ from `http://localhost:9540/api/tts-audio-references`. Open Ultimate Video Edito
 and click **Refresh** if the connection is unavailable. Your choice is saved
 automatically and retained across restarts and connection failures.
 
-This section currently selects a voice for future scene audio generation. It
-does not generate audio or change playback, recording, shortcuts, or the existing
-macOS voice selection under **Speech settings**. It only reads the preset list;
-no narration text is sent to the editor.
+This selection is used by the separate **Cloned Voice Audio** section. The existing
+macOS voice selection under **Speech settings** continues to control all existing
+speech shortcuts.
+
+### Cloned clipboard audio
+
+Copy one scene's narration and press **Command + Shift + G**, or click
+**Generate & Preview Clipboard** under **Cloned Voice Audio**. The shortcut can
+be changed with its recorder in that section. It always reads the clipboard,
+regardless of the script or typed-text input mode. Bracketed recording directions
+are skipped, as with normal speech. Each press generates a new version using the
+selected English preset and its configured seed behavior, saves it locally, and
+previews the saved WAV. Repeated presses during generation are ignored.
+
+Choose a **Saved version** to replay older audio without regeneration, use **Stop
+Preview** to stop only cloned audio, or **Show File** to reveal the WAV in Finder.
+Versions and their original clipboard text, spoken text, voice, measured duration,
+and generation response are retained across restarts under
+`~/Library/Application Support/local.clipboardreadermac/ClonedClipboardAudio/`.
+Each version has its own UUID folder with `audio.wav` and `metadata.json`.
+Incomplete saves are not shown; failed generations preserve earlier versions.
+
+Ultimate Video Editor must be running at `http://localhost:9540`. Narration is
+sent only when generation is requested, through its existing
+`/api/generate-tts-selected` route; generated audio uses the editor's configured
+MinIO storage before being downloaded locally. A `clipboard-<UUID>` scene label
+satisfies the route's filename requirement and does not update Baserow rows.
+Preset IDs select the existing reference and engine settings; this feature does
+not change the editor or its presets.
+
+Generation and preview require macOS speech to be idle and FocuSee to be paused,
+stopped, or closed. Unknown recording state blocks preview. Preview is checked
+again after generation and stops if speech or recording becomes active. No
+recording shortcut is sent, no scene is advanced, and there is no fallback to
+macOS speech. Approval, transcription, and recording approved audio are not yet
+part of this feature.
 
 ### Shortcuts and recording triggers
 
@@ -192,7 +225,11 @@ Some standalone Swift toolchains do not provide XCTest. In that environment the 
 
 ## Privacy
 
-Narration Pilot is local-first. Script text is passed to macOS speech services and is not uploaded by this project. The app contains no analytics, accounts, advertising, or remote storage.
+Narration Pilot is local-first. Existing macOS speech passes text to macOS speech
+services. Optional cloned clipboard generation sends the current narration to your
+running Ultimate Video Editor instance and uses its configured TTS and MinIO
+services; downloaded versions are retained locally. Narration Pilot contains no
+analytics, accounts, or advertising.
 
 ## Contributing
 
