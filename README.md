@@ -218,11 +218,27 @@ The settings mirror the existing clipboard speech shortcuts: **Before playback**
 **After playback**, independent 0–10 second delays, optional **Wait for Neon
 Spotlight**, and **Wait until mouse and keyboard are idle**. Defaults are verified
 FocuSee recording before playback, verified pause afterward, zero extra delays,
-Neon waiting off, and input-idle waiting on. Idle waiting uses the existing global
-input-idle period and maximum wait. Waits apply only when the after action is
-**Ensure FocuSee is paused**. As with macOS speech, the order is audio completion,
-after delay, Neon wait, input-idle wait, then the after action. Existing cue sounds
-are reused before confirmed recording and after confirmed pause.
+Neon waiting off, and input-idle waiting on. Cloned takes have visible, independent
+**Mouse/activity quiet period** and **Keyboard quiet period** settings, both one
+second by default, plus **Maximum extra idle wait** (10 seconds by default).
+Existing settings migrate without resetting recorder actions or delays.
+
+Activity monitoring starts before WAV playback and continues through any finishing
+delay or Neon wait. Inactivity already accumulated during playback counts: if the
+last second of the WAV is quiet, the player completion event does not start a new
+one-second wait. Otherwise the take waits only for the remaining quiet time, or
+until its maximum extra wait is reached. Mouse, clicks, scrolling, and keyboard
+activity in both Narration Pilot and other apps are observed without storing keys
+or text. Small pointer jitter is ignored. Monitoring failures stop the take safely.
+The cloned take no longer uses the macOS speech path's hardcoded keyboard wait;
+that existing speech workflow remains unchanged.
+
+Waits apply only when the after action is **Ensure FocuSee is paused**. The order
+remains audio completion, explicit after delay, Neon wait, idle check using the
+already running monitor, then the after action. Zero after delay and an already
+idle monitor allow an immediate pause request at WAV completion. Recorder command
+latency still applies. Existing cue sounds are reused before confirmed recording
+and after confirmed pause.
 
 Verified resume/pause requires an already active FocuSee recording session; it
 does not create a new capture. FocuSee is rechecked immediately before playback

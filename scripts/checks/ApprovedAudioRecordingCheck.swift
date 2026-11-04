@@ -31,6 +31,24 @@ struct ApprovedAudioRecordingCheck {
             preconditionFailure("Timed out waiting for recording stage")
         }
         let recording = session()
+        let legacy = Data(#"{"before":"none","after":"ensurePaused","delayBefore":0.7,"delayAfter":0.2,"waitsForNeon":true,"waitsForInputIdle":false}"#.utf8)
+        let migrated = try JSONDecoder().decode(ApprovedAudioRecordingSettings.self, from: legacy)
+        precondition(migrated.before == .none && migrated.delayBefore == 0.7 && migrated.waitsForNeon && !migrated.waitsForInputIdle)
+        precondition(migrated.quietPeriod == 1 && migrated.keyboardQuietPeriod == 1 && migrated.maximumExtraWait == 10)
+        var activity = ApprovedAudioIdleState(now: 100)
+        precondition(activity.remaining(at: 110, quietPeriod: 1, keyboardQuietPeriod: 1) == 0,
+                     "Quiet playback must not start a new wait at audio completion")
+        activity.observe(at: 109.8, keyboard: false)
+        precondition(abs(activity.remaining(at: 110, quietPeriod: 1, keyboardQuietPeriod: 1) - 0.8) < 0.001)
+        precondition(activity.remaining(at: 110.81, quietPeriod: 1, keyboardQuietPeriod: 1) == 0)
+        activity.observe(at: 110.5, keyboard: true)
+        precondition(abs(activity.remaining(at: 111, quietPeriod: 1, keyboardQuietPeriod: 1) - 0.5) < 0.001,
+                     "Keyboard quiet time must use its visible setting rather than a hidden 2.5 seconds")
+        precondition(abs(activity.remaining(at: 111, quietPeriod: 0.5, keyboardQuietPeriod: 2.5) - 2) < 0.001)
+        activity.observe(at: 109, keyboard: true)
+        precondition(activity.lastKeyboardActivity == 110.5, "Delayed callbacks cannot rewind the activity clock")
+        let alreadyIdle = ApprovedAudioIdleState(now: 100, generalIdle: 5, keyboardIdle: 5)
+        precondition(alreadyIdle.remaining(at: 100.1, quietPeriod: 1, keyboardQuietPeriod: 1) == 0)
         precondition(recording.settings.before == .ensureRecording && recording.settings.after == .ensurePaused)
         precondition(recording.settings.waitsForInputIdle)
         recording.settings.waitsForNeon = true
@@ -38,6 +56,7 @@ struct ApprovedAudioRecordingCheck {
         recording.settings.delayAfter = 0.02
         precondition(session().settings == recording.settings)
         var events: [String] = []
+        var tracking = false
         var fake = FakeWAVPlayer()
         recording.makePlayer = { _ in fake }
         recording.performAction = { action in events.append(action.rawValue); return nil }
@@ -45,8 +64,13 @@ struct ApprovedAudioRecordingCheck {
         recording.startCue = { events.append("startCue") }
         recording.stopCue = { events.append("stopCue") }
         recording.waitForNeon = { events.append("neon") }
-        recording.waitForInputIdle = { events.append("inputIdle") }
-        fake.onPlay = { events.append("play") }
+        recording.beginInputIdleTracking = { tracking = true; return true }
+        recording.endInputIdleTracking = { tracking = false }
+        recording.waitForInputIdle = { configuration in
+            precondition(tracking && configuration.quietPeriod == 1 && configuration.keyboardQuietPeriod == 1)
+            events.append("inputIdle"); return .idle
+        }
+        fake.onPlay = { precondition(tracking); events.append("play") }
         let take = recording.start(audio: Data(), takeID: UUID())!
         precondition(recording.start(audio: Data(), takeID: UUID()) == nil)
         try await waitFor { fake.didPlay }
@@ -62,6 +86,7 @@ struct ApprovedAudioRecordingCheck {
         fake.completion?(true)
         await take.value
         precondition(recording.phase == "completed" && !recording.isBusy && recording.remaining == 0)
+        precondition(!tracking)
         precondition(events == ["startCue", "ensureRecording", "verifyRecording", "play", "neon", "inputIdle", "ensurePaused", "stopCue"], events.description)
         // Failed recorder confirmation must not play audio; make a safe cleanup attempt.
         events = []; fake = FakeWAVPlayer(); recording.settings = .init()
@@ -109,8 +134,20 @@ struct ApprovedAudioRecordingCheck {
         recording.settings = .init(); fake = FakeWAVPlayer(); fake.playSucceeds = false; events = []
         await recording.start(audio: Data(), takeID: UUID())?.value
         precondition(recording.phase == "failed" && !recording.isBusy && events.contains("ensurePaused"))
+        precondition(!tracking)
+        fake = FakeWAVPlayer(); events = []; recording.beginInputIdleTracking = { false }
+        await recording.start(audio: Data(), takeID: UUID())?.value
+        precondition(!fake.didPlay && recording.phase == "failed" && events.contains("ensurePaused"))
+        recording.beginInputIdleTracking = { tracking = true; return true }
+        recording.waitForInputIdle = { _ in .timedOut }
+        fake = FakeWAVPlayer(); events = []
+        let limited = recording.start(audio: Data(), takeID: UUID())!
+        try await waitFor { fake.didPlay }
+        fake.completion?(true)
+        await limited.value
+        precondition(recording.phase == "completed" && recording.message.contains("maximum extra") && !tracking)
         recording.speechIsIdle = { false }; fake = FakeWAVPlayer(); events = []
         precondition(recording.start(audio: Data(), takeID: UUID()) == nil && !fake.didPlay && events.isEmpty)
-        print("PASS: original-clock progress, completion-driven finishing, delay/wait order, settings persistence/snapshot, failed confirmation, cancellation cleanup, macOS takeover, stale completion, duplicate suppression and no-action behavior; no recorder or real audio used")
+        print("PASS: activity during playback, immediate completion when already idle, late mouse/keyboard activity, explicit quiet periods, legacy settings migration, monitoring failure/timeout, plus recording lifecycle/cancellation; no recorder or real audio used")
     }
 }

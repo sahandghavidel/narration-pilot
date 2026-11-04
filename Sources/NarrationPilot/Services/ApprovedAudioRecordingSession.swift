@@ -9,11 +9,35 @@ struct ApprovedAudioRecordingSettings: Codable, Equatable {
     var delayAfter: Double = 0
     var waitsForNeon = false
     var waitsForInputIdle = true
+    var quietPeriod: Double = 1
+    var keyboardQuietPeriod: Double = 1
+    var maximumExtraWait: Double = 10
+
+    init() {}
+    private enum CodingKeys: String, CodingKey {
+        case before, after, delayBefore, delayAfter, waitsForNeon, waitsForInputIdle
+        case quietPeriod, keyboardQuietPeriod, maximumExtraWait
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        before = try values.decodeIfPresent(ExternalTriggerAction.self, forKey: .before) ?? .ensureRecording
+        after = try values.decodeIfPresent(ExternalTriggerAction.self, forKey: .after) ?? .ensurePaused
+        delayBefore = try values.decodeIfPresent(Double.self, forKey: .delayBefore) ?? 0
+        delayAfter = try values.decodeIfPresent(Double.self, forKey: .delayAfter) ?? 0
+        waitsForNeon = try values.decodeIfPresent(Bool.self, forKey: .waitsForNeon) ?? false
+        waitsForInputIdle = try values.decodeIfPresent(Bool.self, forKey: .waitsForInputIdle) ?? true
+        quietPeriod = try values.decodeIfPresent(Double.self, forKey: .quietPeriod) ?? 1
+        keyboardQuietPeriod = try values.decodeIfPresent(Double.self, forKey: .keyboardQuietPeriod) ?? 1
+        maximumExtraWait = try values.decodeIfPresent(Double.self, forKey: .maximumExtraWait) ?? 10
+    }
 
     var normalized: Self {
         var copy = self
         copy.delayBefore = delayBefore.isFinite ? min(10, max(0, delayBefore)) : 0
         copy.delayAfter = delayAfter.isFinite ? min(10, max(0, delayAfter)) : 0
+        copy.quietPeriod = quietPeriod.isFinite ? min(5, max(0.1, quietPeriod)) : 1
+        copy.keyboardQuietPeriod = keyboardQuietPeriod.isFinite ? min(5, max(0.1, keyboardQuietPeriod)) : 1
+        copy.maximumExtraWait = maximumExtraWait.isFinite ? min(30, max(1, maximumExtraWait)) : 10
         return copy
     }
 }
@@ -78,7 +102,9 @@ final class ApprovedAudioRecordingSession: ObservableObject {
     var stopCue: () async -> Void = {}
     var failureCue: () -> Void = {}
     var waitForNeon: () async -> Void = {}
-    var waitForInputIdle: () async -> Void = {}
+    var beginInputIdleTracking: (() -> Bool)?
+    var endInputIdleTracking: (() -> Void)?
+    var waitForInputIdle: ((ApprovedAudioRecordingSettings) async -> ApprovedAudioIdleResult)?
     var makePlayer: (Data) throws -> any ApprovedAudioPlaying = { try ApprovedWAVPlayer(audio: $0) }
 
     private static let settingsKey = "narrationPilot.approvedAudioRecording.settings"
@@ -93,6 +119,8 @@ final class ApprovedAudioRecordingSession: ObservableObject {
     private var pauseOnCancel = true
     private var takeID: UUID?
     private var sessionID: UUID?
+    private let inputIdleMonitor = ApprovedAudioIdleMonitor()
+    private var idleWaitOutcome = "notRequested"
 
     init(defaults: UserDefaults = .standard, feedbackURL: URL = ApprovedAudioRecordingSession.feedbackURL) {
         self.defaults = defaults
@@ -124,6 +152,7 @@ final class ApprovedAudioRecordingSession: ObservableObject {
         duration = prepared.duration
         isBusy = true
         pauseOnCancel = true
+        idleWaitOutcome = "notRequested"
         transition("preparing", "Approved WAV prepared. Starting recording actions…")
         timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateClock() }
@@ -132,7 +161,11 @@ final class ApprovedAudioRecordingSession: ObservableObject {
         task = Task { [weak self] in
             guard let self else { return }
             var mayNeedPause = false
+            var trackingInput = false
             defer {
+                if trackingInput {
+                    if let end = self.endInputIdleTracking { end() } else { self.inputIdleMonitor.stop() }
+                }
                 self.player?.stop()
                 self.player?.completion = nil
                 self.player = nil
@@ -161,6 +194,13 @@ final class ApprovedAudioRecordingSession: ObservableObject {
                 }
                 try Task.checkCancellation()
                 guard self.speechIsIdle() else { throw self.error("macOS speech became active before playback.") }
+                if configuration.after == .ensurePaused && configuration.waitsForInputIdle {
+                    guard self.beginInputIdleTracking?() ?? self.inputIdleMonitor.start() else {
+                        throw self.error("Input activity monitoring is unavailable. Restore Accessibility access before recording with idle waiting.")
+                    }
+                    trackingInput = true
+                    self.idleWaitOutcome = "trackingDuringPlayback"
+                }
                 self.transition("playing", "Playing the approved WAV at its original speed…")
                 if configuration.after == .ensurePaused { mayNeedPause = true }
                 let finished = await self.playToCompletion(prepared)
@@ -178,14 +218,27 @@ final class ApprovedAudioRecordingSession: ObservableObject {
                 try Task.checkCancellation()
                 if configuration.after == .ensurePaused && configuration.waitsForInputIdle {
                     self.transition("waitingForInput", "Audio finished. Waiting until mouse and keyboard are idle…")
-                    await self.waitForInputIdle()
+                    let result: ApprovedAudioIdleResult
+                    if let wait = self.waitForInputIdle { result = await wait(configuration) }
+                    else {
+                        result = await self.inputIdleMonitor.waitUntilIdle(quietPeriod: configuration.quietPeriod,
+                            keyboardQuietPeriod: configuration.keyboardQuietPeriod, maximumExtraWait: configuration.maximumExtraWait)
+                    }
+                    try Task.checkCancellation()
+                    switch result {
+                    case .idle: self.idleWaitOutcome = "idle"
+                    case .timedOut: self.idleWaitOutcome = "maximumExtraWaitReached"
+                    case .unavailable: throw self.error("Input activity monitoring became unavailable. The take was stopped safely.")
+                    }
                 }
                 try Task.checkCancellation()
                 self.transition("finishing", "Running the after-playback action…")
                 if let error = await self.performAction(configuration.after) { throw self.error(error) }
                 if configuration.after == .ensurePaused { mayNeedPause = false; await self.stopCue() }
                 try Task.checkCancellation()
-                self.transition("completed", "Approved audio take completed.")
+                self.transition("completed", self.idleWaitOutcome == "maximumExtraWaitReached"
+                    ? "Approved audio take completed. The maximum extra input wait was reached."
+                    : "Approved audio take completed.")
             } catch {
                 self.player?.stop()
                 let cancelled = Task.isCancelled
@@ -248,6 +301,7 @@ final class ApprovedAudioRecordingSession: ObservableObject {
             "pid": ProcessInfo.processInfo.processIdentifier, "sessionID": sessionID?.uuidString ?? "",
             "audioVersionID": takeID?.uuidString ?? "", "phase": phase, "busy": isBusy,
             "staleAfterSeconds": 1, "playbackRate": 1.0,
+            "idleWaitOutcome": idleWaitOutcome,
             "elapsedSeconds": elapsed, "remainingSeconds": remaining, "durationSeconds": duration,
             "clockSource": "AVAudioPlayer.currentTime", "durationIsEstimate": false, "message": message]
         do {

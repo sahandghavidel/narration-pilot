@@ -33,7 +33,15 @@ struct ApprovedAudioRecordingView: View {
                             .disabled(recording.settings.after != .ensurePaused)
                         Toggle("Wait until mouse and keyboard are idle", isOn: $recording.settings.waitsForInputIdle)
                             .disabled(recording.settings.after != .ensurePaused)
-                        Text("Uses your existing input-idle timing settings. Waiting begins after audio and any finishing delay or Neon Spotlight wait.")
+                        if recording.settings.waitsForInputIdle && recording.settings.after == .ensurePaused {
+                            Stepper("Mouse/activity quiet period: \(recording.settings.quietPeriod, specifier: "%.1f") seconds",
+                                    value: $recording.settings.quietPeriod, in: 0.1...5, step: 0.1)
+                            Stepper("Keyboard quiet period: \(recording.settings.keyboardQuietPeriod, specifier: "%.1f") seconds",
+                                    value: $recording.settings.keyboardQuietPeriod, in: 0.1...5, step: 0.1)
+                            Stepper("Maximum extra idle wait: \(recording.settings.maximumExtraWait, specifier: "%.1f") seconds",
+                                    value: $recording.settings.maximumExtraWait, in: 1...30, step: 1)
+                        }
+                        Text("Activity is tracked during playback. If already quiet when the WAV ends, there is no extra idle delay. Any after-playback delay or Neon Spotlight wait still applies.")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     .font(.caption)

@@ -3360,11 +3360,6 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             _ = await self.neonSpotlightStatusService.waitUntilIdle()
         }
-        approvedAudioRecording.waitForInputIdle = { [weak self] in
-            guard let self else { return }
-            _ = await self.userActivityIdleService.waitUntilIdle(
-                idlePeriod: self.userActivityIdlePeriod, maximumWait: self.userActivityMaximumWait)
-        }
     }
 
     private func bindSpeechState() {
