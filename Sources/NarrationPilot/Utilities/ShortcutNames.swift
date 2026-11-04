@@ -1,6 +1,8 @@
 @preconcurrency import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
+    static let recordApprovedClipboardAudio = Self("recordApprovedClipboardAudio")
+
     static let generateClonedClipboardAudio = Self(
         "generateClonedClipboardAudio",
         default: KeyboardShortcuts.Shortcut(.g, modifiers: [.command, .shift])
@@ -81,6 +83,8 @@ extension KeyboardShortcuts.Name {
     static let openFocusAndPlaySceneManager = Self("openFocusAndPlaySceneManager")
 
     static let ensureFocuSeeRecording = Self("ensureFocuSeeRecording")
+
+    static let copyCurrentSceneForAgent = Self("copyCurrentSceneForAgent")
 
     static let ensureFocuSeePaused = Self("ensureFocuSeePaused")
 }

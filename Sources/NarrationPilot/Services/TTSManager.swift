@@ -7,6 +7,10 @@ final class TTSManager: NSObject, ObservableObject {
     @Published private(set) var resolvedVoiceDescription: String = "System Default"
     @Published private(set) var resolvedVoiceNote: String?
     @Published private(set) var completedUtteranceCount = 0
+    @Published private(set) var failedUtteranceCount = 0
+
+    @Published private(set) var currentPassage = ""
+    @Published private(set) var currentWord = ""
 
     private let synthesizer = AVSpeechSynthesizer()
     private let systemSynthesizer = NSSpeechSynthesizer()
@@ -72,6 +76,8 @@ final class TTSManager: NSObject, ObservableObject {
     }
 
     private func startSpeech(text: String, speedMultiplier: Double, voiceIdentifier: String?) {
+        currentPassage = text
+        currentWord = ""
         if shouldUseSystemDefaultSpeechRoute(for: voiceIdentifier) {
             speakWithSystemDefaultSynthesizer(text: text, speedMultiplier: speedMultiplier)
             return
@@ -258,6 +264,7 @@ final class TTSManager: NSObject, ObservableObject {
             queuedSegments = []
             state = .idle
             if finished { completedUtteranceCount += 1 }
+            else { failedUtteranceCount += 1 }
             return
         }
 
@@ -307,6 +314,15 @@ final class TTSManager: NSObject, ObservableObject {
 }
 
 extension TTSManager: AVSpeechSynthesizerDelegate {
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString range: NSRange, utterance: AVSpeechUtterance) {
+        let utteranceID = ObjectIdentifier(utterance)
+        let word = (utterance.speechString as NSString).substring(with: range)
+        DispatchQueue.main.async {
+            guard utteranceID == self.activeAVUtteranceID else { return }
+            self.currentWord = word
+        }
+    }
+
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         let utteranceID = ObjectIdentifier(utterance)
         DispatchQueue.main.async {
@@ -343,6 +359,11 @@ extension TTSManager: AVSpeechSynthesizerDelegate {
 }
 
 extension TTSManager: NSSpeechSynthesizerDelegate {
+    func speechSynthesizer(_ sender: NSSpeechSynthesizer, willSpeakWord characterRange: NSRange, of string: String) {
+        let word = (string as NSString).substring(with: characterRange)
+        DispatchQueue.main.async { self.currentWord = word }
+    }
+
     func speechSynthesizer(_ sender: NSSpeechSynthesizer, didFinishSpeaking finishedSpeaking: Bool) {
         DispatchQueue.main.async {
             guard self.activeEngine == .systemSpeech, !sender.isSpeaking else {

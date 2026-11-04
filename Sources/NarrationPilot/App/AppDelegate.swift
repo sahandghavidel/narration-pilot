@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AppModel.shared.agentFeedback.stop()
         RuntimeReliability.shared.stop()
         AppModel.shared.stopMouseShortcuts()
     }

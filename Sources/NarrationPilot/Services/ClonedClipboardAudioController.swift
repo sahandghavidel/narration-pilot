@@ -57,6 +57,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
     @Published private(set) var isPreviewing = false
     @Published private(set) var message = "Copy one scene’s narration, then generate a cloned voice preview."
     var macOSSpeechIsIdle: () -> Bool = { true }
+    var approvedRecordingIsActive: () -> Bool = { false }
     var recordingAllowsPreview: () async -> Bool = {
         await Task.detached(priority: .utility) {
             FocuSeeAccessibilityService().recordingState().allowsSceneReview
@@ -104,6 +105,33 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
     }
 
     var selectedTake: ClipboardAudioTake? { takes.first { $0.id == selectedID } }
+
+    func approvedClipboardAudio() throws -> (take: ClipboardAudioTake, audio: Data) {
+        guard let voice = UltimateEditorVoiceLibrary(defaults: defaults).selectedVoice else {
+            throw recordingError("Choose the English voice used for your approved audio first.")
+        }
+        return try approvedAudio(narration: NSPasteboard.general.string(forType: .string) ?? "", voiceID: voice.id)
+    }
+
+    func approvedAudio(narration: String, voiceID: String) throws -> (take: ClipboardAudioTake, audio: Data) {
+        guard !isGenerating else { throw recordingError("Wait for audio preparation to finish first.") }
+        let text = SpokenTextSanitizer.preparingForSpeech(narration, includesBracketedDirections: false)
+        guard !text.isEmpty else { throw recordingError("Copy the approved narration to the clipboard first.") }
+        let key = ClipboardAudioGrouping.key(text: text, voiceID: voiceID)
+        guard let id = approvedVersions[key], let take = takes.first(where: { $0.id == id && $0.groupID == key }) else {
+            throw recordingError("No approved audio matches this clipboard narration and voice. Prepare and approve it before recording.")
+        }
+        // Freeze the exact local bytes before sending any recorder shortcut.
+        let audio = try Data(contentsOf: audioURL(for: take))
+        guard audio.count > 44, audio.starts(with: Data("RIFF".utf8)), audio.subdata(in: 8..<12) == Data("WAVE".utf8) else {
+            throw recordingError("The approved WAV is missing or invalid. Recording was not started.")
+        }
+        return (take, audio)
+    }
+
+    private func recordingError(_ message: String) -> NSError {
+        NSError(domain: "ClonedClipboardAudio", code: 6, userInfo: [NSLocalizedDescriptionKey: message])
+    }
     var selectedIsApproved: Bool {
         guard let take = selectedTake else { return false }
         return approvedVersions[take.groupID] == take.id
@@ -146,6 +174,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
 
     func generateClipboard(forceNewVersion: Bool = false) {
         guard !isGenerating else { return }
+        guard !approvedRecordingIsActive() else { message = "Finish the cloned audio take before preparing another version."; return }
         let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
         guard let voice = UltimateEditorVoiceLibrary(defaults: defaults).selectedVoice else {
             message = "Choose an English voice in Ultimate Video Editor voice first."
@@ -167,6 +196,7 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         let text = SpokenTextSanitizer.preparingForSpeech(clipboard, includesBracketedDirections: false)
         guard !text.isEmpty else { message = "Copy some narration text first."; return }
         guard text.count <= 12000 else { message = "Copy one scene at a time (up to 12,000 characters)."; return }
+        guard !approvedRecordingIsActive() else { message = "Finish the cloned audio take before preparing another version."; return }
         guard macOSSpeechIsIdle() else { message = "Wait for macOS speech to finish before generating a cloned preview."; return }
         guard await recordingAllowsPreview() else {
             message = "Pause FocuSee before generating a preview. Its recording state must be known."
@@ -226,11 +256,12 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
 
     func previewSelected() async {
         guard let take = selectedTake else { return }
+        guard !approvedRecordingIsActive() else { message = "Finish the cloned audio take before previewing another version."; return }
         stopPreview()
         let revision = previewRevision
         let recordingAllowed = await recordingAllowsPreview()
         guard revision == previewRevision, selectedID == take.id else { return }
-        guard macOSSpeechIsIdle(), recordingAllowed else {
+        guard macOSSpeechIsIdle(), recordingAllowed, !approvedRecordingIsActive() else {
             message = "Audio is saved. Preview when macOS speech is idle and FocuSee is paused."
             return
         }

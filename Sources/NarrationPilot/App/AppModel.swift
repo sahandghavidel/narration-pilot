@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 final class AppModel: ObservableObject {
     static let shared = AppModel()
     let clonedClipboardAudio = ClonedClipboardAudioController()
+    let approvedAudioRecording = ApprovedAudioRecordingSession()
+    let agentFeedback = AgentFeedbackPublisher()
 
     @Published private(set) var speechState: SpeechState = .idle
     @Published var statusMessage: String = SpeechState.idle.label
@@ -1073,6 +1075,8 @@ final class AppModel: ObservableObject {
 
         previewActivityPublisher.start()
         bindSpeechState()
+        configureApprovedAudioRecording()
+        agentFeedback.start { [weak self] in self?.refreshAgentFeedback() }
         registerShortcutHandlers()
         presenterOverlayController = PresenterOverlayController(appModel: self)
         sceneEditorController = SceneEditorController(appModel: self)
@@ -3106,6 +3110,7 @@ final class AppModel: ObservableObject {
         readingStatus: String,
         speak: @escaping @MainActor () -> Void
     ) {
+        approvedAudioRecording.cancel(pauseRecording: false)
         cancelPendingReadSequence()
         if speechState == .speaking || speechState == .paused || speechState == .stopping {
             ttsManager.stop()
@@ -3113,6 +3118,7 @@ final class AppModel: ObservableObject {
 
         let sequenceID = UUID()
         activeReadSequenceID = sequenceID
+        agentFeedback.begin(id: sequenceID, scene: agentSceneSnapshot(), recordingExpected: actionBefore != .none || actionAfter != .none)
         externalTriggerActionAfterSpeech = actionAfter
         externalTriggerDelayAfterSpeech = actionAfter == .none ? 0 : Self.clampTriggerDelay(delayAfter)
         waitsForNeonSpotlightAfterSpeech = actionAfter == .ensurePaused
@@ -3144,9 +3150,11 @@ final class AppModel: ObservableObject {
                     self.playRecordingFailureCue()
                     self.statusMessage = "Recording did not start. Narration cancelled."
                 }
+                self.agentFeedback.finish("failed", error: self.statusMessage)
                 self.cancelPendingReadSequence()
                 return
             }
+            if actionBefore == .ensureRecording { self.agentFeedback.transition("recordingConfirmed") }
 
             if resolvedDelayBefore > 0 {
                 self.statusMessage = "Starting speech in \(Self.formattedDelay(resolvedDelayBefore)) seconds…"
@@ -3159,11 +3167,13 @@ final class AppModel: ObservableObject {
 
             self.pendingReadTask = nil
             self.statusMessage = readingStatus
+            self.agentFeedback.transition("startingNarration")
             speak()
         }
     }
 
     private func cancelPendingReadSequence() {
+        if activeReadSequenceID != nil { agentFeedback.finish("cancelled", error: "Read sequence cancelled") }
         pendingReadTask?.cancel()
         pendingReadTask = nil
         activeReadSequenceID = nil
@@ -3221,7 +3231,9 @@ final class AppModel: ObservableObject {
             return false
         }
 
+        agentFeedback.transition(targetState == .recording ? "recordingRequested" : "pauseRequested")
         let currentState = focuSeeAccessibilityService.recordingState()
+        agentFeedback.observe(currentState)
         if currentState == targetState {
             if reportsSuccess {
                 statusMessage = targetState == .recording
@@ -3261,6 +3273,7 @@ final class AppModel: ObservableObject {
         }
 
         let actualState = focuSeeAccessibilityService.recordingState()
+        agentFeedback.observe(actualState)
         guard actualState == targetState else {
             statusMessage = "FocuSee did not change to the requested recording state."
             return false
@@ -3303,15 +3316,75 @@ final class AppModel: ObservableObject {
         return try? JSONDecoder().decode(TriggerShortcut.self, from: data)
     }
 
+    func recordApprovedClipboardAudio() {
+        guard !approvedAudioRecording.isBusy else { return }
+        guard speechState == .idle, pendingReadTask == nil, activeReadSequenceID == nil else {
+            approvedAudioRecording.report("Wait for macOS speech and recording actions to finish first.")
+            return
+        }
+        do {
+            let prepared = try clonedClipboardAudio.approvedClipboardAudio()
+            clonedClipboardAudio.stopPreview()
+            approvedAudioRecording.start(audio: prepared.audio, takeID: prepared.take.id)
+        } catch { approvedAudioRecording.report(error.localizedDescription) }
+    }
+
+    private func configureApprovedAudioRecording() {
+        clonedClipboardAudio.approvedRecordingIsActive = { [weak self] in self?.approvedAudioRecording.isBusy ?? false }
+        approvedAudioRecording.speechIsIdle = { [weak self] in
+            guard let self else { return false }
+            return self.speechState == .idle && self.pendingReadTask == nil
+                && self.activeReadSequenceID == nil && !self.clonedClipboardAudio.isGenerating
+        }
+        approvedAudioRecording.performAction = { [weak self] action in
+            guard let self else { return "Narration Pilot is unavailable." }
+            let succeeded = await self.performExternalTriggerAction(action, reportsSuccess: true)
+            return succeeded ? nil : self.statusMessage
+        }
+        approvedAudioRecording.startCue = { [weak self] in
+            guard let self, self.recordingCueSoundsEnabled else { return }
+            self.recordingStartCueSound.play()
+            if self.recordingStartCueSound != .none {
+                try? await Task.sleep(for: .seconds(self.recordingStartCueDelay))
+            }
+        }
+        approvedAudioRecording.stopCue = { [weak self] in
+            guard let self, self.recordingCueSoundsEnabled else { return }
+            if self.recordingStopCueDelay > 0 {
+                try? await Task.sleep(for: .seconds(self.recordingStopCueDelay))
+            }
+            if !Task.isCancelled { self.recordingStopCueSound.play() }
+        }
+        approvedAudioRecording.failureCue = { [weak self] in self?.playRecordingFailureCue() }
+        approvedAudioRecording.waitForNeon = { [weak self] in
+            guard let self else { return }
+            _ = await self.neonSpotlightStatusService.waitUntilIdle()
+        }
+        approvedAudioRecording.waitForInputIdle = { [weak self] in
+            guard let self else { return }
+            _ = await self.userActivityIdleService.waitUntilIdle(
+                idlePeriod: self.userActivityIdlePeriod, maximumWait: self.userActivityMaximumWait)
+        }
+    }
+
     private func bindSpeechState() {
         clonedClipboardAudio.macOSSpeechIsIdle = { [weak self] in
             guard let self else { return false }
             return self.speechState == .idle && self.pendingReadTask == nil
         }
+        ttsManager.$failedUtteranceCount.dropFirst().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.agentFeedback.finish("failed", error: "Speech engine did not finish narration")
+            }.store(in: &cancellables)
+
         ttsManager.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                if state == .speaking { self?.clonedClipboardAudio.stopPreview() }
+                if state == .speaking {
+                    self?.clonedClipboardAudio.stopPreview()
+                    self?.approvedAudioRecording.cancel(pauseRecording: false)
+                }
                 self?.speechState = state
                 self?.previewActivityPublisher.update(speaking: state == .speaking)
                 self?.persistExternalSpeechState(state)
@@ -3322,6 +3395,7 @@ final class AppModel: ObservableObject {
                     self?.applyPendingChapterReloadIfNeeded()
                 }
                 self?.refreshPresenterOverlayVisibility()
+                self?.refreshAgentFeedback()
             }
             .store(in: &cancellables)
 
@@ -3376,6 +3450,7 @@ final class AppModel: ObservableObject {
     }
 
     private func handleCompletedSpeech() {
+        agentFeedback.transition("narrationFinished")
         if isSceneManagerNarrationQueuePlaying {
             playNextSceneManagerNarration()
             return
@@ -3472,6 +3547,8 @@ final class AppModel: ObservableObject {
                 self.playRecordingFailureCue()
             }
 
+            self.agentFeedback.finish(actionSucceeded ? (action == .ensurePaused ? "pauseConfirmed" : "narrationCompleted") : "failed",
+                                      error: actionSucceeded ? nil : self.statusMessage)
             self.pendingReadTask = nil
             self.activeReadSequenceID = nil
             if actionSucceeded {
@@ -3496,12 +3573,45 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func agentSceneSnapshot() -> [String: Any] {
+        var result: [String: Any] = [
+            "source": scriptInputFormat.rawValue, "scriptMode": scriptModeEnabled,
+            "scriptTitle": loadedChapterDescription ?? "Text input",
+            "scriptID": baserowSelectedScriptID, "sceneIndex": currentSceneIndex + 1,
+            "sceneCount": scriptScenes.count, "narration": currentNarrationScene?.narration ?? currentSceneText ?? typedText,
+            "part": currentScenePart ?? "", "previousTitle": previousSceneDisplayText ?? "",
+            "nextTitle": nextSceneDisplayText ?? ""
+        ]
+        if let chapter = loadedChapter {
+            result["chapterNumber"] = chapter.chapterNumber
+            result["chapterTitle"] = chapter.chapterTitle
+        }
+        if let scene = currentNarrationScene,
+           let data = try? JSONEncoder().encode(scene),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            result["content"] = object
+            result["sceneID"] = scene.id
+        }
+        return result
+    }
+
+    private func refreshAgentFeedback() {
+        agentFeedback.publish(scene: agentSceneSnapshot(), speech: String(describing: speechState),
+                              passage: ttsManager.currentPassage, word: ttsManager.currentWord,
+                              estimatedDuration: NarrationAudioExporter.estimatedDuration(
+                                texts: [currentNarrationScene?.narration ?? currentSceneText ?? typedText],
+                                speed: speedMultiplier), message: statusMessage)
+    }
+
     func recoverAfterSessionResume() {
+        approvedAudioRecording.cancel()
+        KeyboardShortcuts.disable(.recordApprovedClipboardAudio)
+        KeyboardShortcuts.enable(.recordApprovedClipboardAudio)
         KeyboardShortcuts.disable(.generateClonedClipboardAudio)
         KeyboardShortcuts.enable(.generateClonedClipboardAudio)
         mouseShortcutService?.stop()
         startMouseShortcuts()
-        let names: [KeyboardShortcuts.Name] = [.readClipboard, .readCurrentInputSecondary, .readClipboardAlways, .readClipboardAlwaysSecondary, .readClipboardAlwaysTertiary, .stopReading, .pauseResumeReading, .replayScriptScene, .replayOnScreenOnly, .replayCodeOnly, .previousScriptScene, .nextScriptScene, .restartScript, .togglePresenterOverlay, .editCurrentScene, .openFocusAndPlaySceneManager, .ensureFocuSeeRecording, .ensureFocuSeePaused]
+        let names: [KeyboardShortcuts.Name] = [.readClipboard, .readCurrentInputSecondary, .readClipboardAlways, .readClipboardAlwaysSecondary, .readClipboardAlwaysTertiary, .stopReading, .pauseResumeReading, .replayScriptScene, .replayOnScreenOnly, .replayCodeOnly, .previousScriptScene, .nextScriptScene, .restartScript, .togglePresenterOverlay, .editCurrentScene, .openFocusAndPlaySceneManager, .ensureFocuSeeRecording, .ensureFocuSeePaused, .copyCurrentSceneForAgent]
         for name in names { KeyboardShortcuts.disable(name); KeyboardShortcuts.enable(name) }
     }
 
@@ -3571,8 +3681,14 @@ final class AppModel: ObservableObject {
     }
 
     private func registerShortcutHandlers() {
+        KeyboardShortcuts.onKeyUp(for: .recordApprovedClipboardAudio) { [weak self] in
+            Task { @MainActor in self?.recordApprovedClipboardAudio() }
+        }
         KeyboardShortcuts.onKeyUp(for: .generateClonedClipboardAudio) { [weak self] in
             Task { @MainActor in self?.clonedClipboardAudio.generateClipboard() }
+        }
+        KeyboardShortcuts.onKeyUp(for: .copyCurrentSceneForAgent) { [weak self] in
+            Task { @MainActor in self?.agentFeedback.copySnapshot() }
         }
         KeyboardShortcuts.onKeyUp(for: .readClipboard) { [weak self] in
             Task { @MainActor in

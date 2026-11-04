@@ -199,18 +199,51 @@ Generation and preview require macOS speech to be idle and FocuSee to be paused,
 stopped, or closed. Unknown recording state blocks preview. Preview is checked
 again after generation and stops if speech or recording becomes active. No
 recording shortcut is sent, no scene is advanced, and there is no fallback to
-macOS speech. Recording approved audio is not yet part of this feature.
+macOS speech. Approved audio recording has its own controls below.
 
-### Planned approved-audio recording
+### Approved audio recording
 
-The approved WAV and its actual playback clock will control each take. Rehearse
-the actions against that file's duration, confirm FocuSee is recording, then play
-the file and expose elapsed and remaining playback time. Finish the actions before
-playback ends and leave the screen settled. Pause FocuSee on the player's
-completion event. Transcription is an optional phrase-timing guide and does not
-control recording duration. Scenes whose actions cannot comfortably fit should
-be adjusted or split before recording. FocuSee start/pause latency still needs
-measurement; this workflow does not yet guarantee gap-free recording boundaries.
+Under **Approved Audio Recording**, assign the separate **Shortcut** recorder or
+click **Record Approved Clipboard Audio**. The shortcut starts unassigned to avoid
+replacing an existing binding. Copy narration with approved audio for the English
+voice selected above. The approved version is matched by narration and voice,
+even if a different candidate is currently selected in the audio library.
+
+The WAV is loaded and prepared before any recorder action. Missing approval,
+unreadable audio, or active macOS speech prevents the take. No generation,
+transcription, scene navigation, or speech synthesis is performed during this
+operation. Original WAV speed is fixed at 1.00x.
+
+The settings mirror the existing clipboard speech shortcuts: **Before playback**,
+**After playback**, independent 0–10 second delays, optional **Wait for Neon
+Spotlight**, and **Wait until mouse and keyboard are idle**. Defaults are verified
+FocuSee recording before playback, verified pause afterward, zero extra delays,
+Neon waiting off, and input-idle waiting on. Idle waiting uses the existing global
+input-idle period and maximum wait. Waits apply only when the after action is
+**Ensure FocuSee is paused**. As with macOS speech, the order is audio completion,
+after delay, Neon wait, input-idle wait, then the after action. Existing cue sounds
+are reused before confirmed recording and after confirmed pause.
+
+Verified resume/pause requires an already active FocuSee recording session; it
+does not create a new capture. FocuSee is rechecked immediately before playback
+when **Ensure recording** is selected. The actual player's completion event starts
+the finishing sequence. Transcription never controls duration. The panel shows
+elapsed, remaining, and total audio time, preserving zero remaining while waiting
+for screen actions to finish. Each take snapshots its settings and audio bytes.
+
+**Stop Cloned Take** stops the WAV, cancels pending waits, and attempts a verified
+pause when this take may have started or owned recording. Starting macOS speech
+interrupts cloned playback and yields recording control to that original shortcut;
+the cancelled cloned take does not send a late pause into the new workflow.
+Generation/preview is blocked during a cloned take. Existing macOS speech settings
+and bindings remain independent.
+
+Live playback progress is also written atomically to
+`~/Library/Application Support/local.clipboardreadermac/Runtime/approved-audio-recording.json`
+with a session ID, audio version ID, stage, and actual player elapsed/remaining/
+duration values. It contains no narration text. FocuSee command latency and enabled
+finishing waits can still produce lead-in or tail footage; exact saved-footage
+boundaries need a live recording test and are not guaranteed by these controls.
 
 ### Shortcuts and recording triggers
 

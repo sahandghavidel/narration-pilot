@@ -1,6 +1,6 @@
 import Foundation
 
-enum ExternalTriggerAction: String, CaseIterable, Identifiable {
+enum ExternalTriggerAction: String, CaseIterable, Identifiable, Codable, Sendable {
     case none
     case toggle
     case ensureRecording

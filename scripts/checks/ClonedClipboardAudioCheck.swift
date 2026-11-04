@@ -194,6 +194,18 @@ struct ClonedClipboardAudioCheck {
         precondition(reopened.transcribeApprovedAudio(approved.id) == nil)
         precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeCached)
         let originalApproved = try Data(contentsOf: reopened.audioURL(for: approved))
+        reopened.select(first.id)
+        let frozen = try reopened.approvedAudio(narration: "[Record] Hello\n world.", voiceID: "test-voice")
+        precondition(frozen.take.id == approved.id && frozen.audio == originalApproved)
+        do {
+            _ = try reopened.approvedAudio(narration: "Hello world.", voiceID: "unapproved-voice")
+            preconditionFailure("Recording must not fall back to another voice")
+        } catch { }
+        do {
+            _ = try reopened.approvedAudio(narration: "Unapproved narration.", voiceID: "test-voice")
+            preconditionFailure("Recording must require matching approved audio")
+        } catch { }
+        reopened.select(approved.id)
         var changed = originalApproved
         changed[changed.count - 1] = 1
         try changed.write(to: reopened.audioURL(for: approved), options: .atomic)
@@ -223,6 +235,12 @@ struct ClonedClipboardAudioCheck {
         let beforeMissing = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
         await reopened.generate(clipboard: "Hello world.", voiceID: "test-voice")
         precondition(reopened.message.contains("approved file is missing"))
+        precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeMissing)
+        reopened.approvedRecordingIsActive = { true }
+        await reopened.generate(clipboard: "Hello world.", voiceID: "test-voice")
+        precondition(reopened.message.contains("Finish the cloned audio take"))
+        await reopened.previewSelected()
+        precondition(reopened.message.contains("before previewing"))
         precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeMissing)
         print("PASS: grouped approval/reuse plus Tiny.en timings, fingerprint invalidation, restart cache, failure/retry, empty timestamps, duplicate suppression and independent version caches; no real playback")
     }

@@ -39,6 +39,8 @@ struct MenuBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            AgentFeedbackView(feedback: appModel.agentFeedback)
+
             DisclosureGroup("Input", isExpanded: $inputExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("Read typed text instead of clipboard", isOn: $appModel.readsTypedTextInsteadOfClipboard)
@@ -326,6 +328,8 @@ struct MenuBarView: View {
             UltimateEditorVoiceView()
 
             ClonedClipboardAudioView(audio: appModel.clonedClipboardAudio)
+
+            ApprovedAudioRecordingView(recording: appModel.approvedAudioRecording, record: appModel.recordApprovedClipboardAudio)
 
             DisclosureGroup("Speech settings", isExpanded: $speechSettingsExpanded) {
                 VStack(alignment: .leading, spacing: 10) {
