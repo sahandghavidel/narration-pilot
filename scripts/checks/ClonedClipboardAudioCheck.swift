@@ -230,6 +230,9 @@ struct ClonedClipboardAudioCheck {
         let beforeGuided = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
         let cachedGuided = try await reopened.prepareGuidedAudio(narration: "Hello world.", voiceID: "test-voice", forceNewVersion: false, isCurrent: { true })
         precondition(cachedGuided.id == approved.id)
+        let practiceMaterial = try await reopened.approvedPracticeMaterial(takeID: approved.id, narration: "Hello world.", voiceID: "test-voice")
+        precondition(practiceMaterial.audio == originalApproved && practiceMaterial.transcription.words.count == 2)
+        precondition(practiceMaterial.transcription.audioSHA256 == ClipboardAudioTranscription.fingerprint(originalApproved))
         precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeGuided)
         let selectionBeforeGuided = reopened.selectedID
         let newGuided = try await reopened.prepareGuidedAudio(narration: "Frozen approved wording.", voiceID: "test-voice", forceNewVersion: true, isCurrent: { true })

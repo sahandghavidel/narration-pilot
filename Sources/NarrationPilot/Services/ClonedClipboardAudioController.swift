@@ -131,6 +131,27 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         return (take, audio)
     }
 
+    func approvedPracticeMaterial(takeID: UUID, narration: String, voiceID: String) async throws
+        -> (take: ClipboardAudioTake, audio: Data, transcription: ClipboardAudioTranscription) {
+        let frozen = try approvedAudio(narration: narration, voiceID: voiceID)
+        guard frozen.take.id == takeID else { throw recordingError("The approved version changed. Approve and practice the intended version first.") }
+        loadCachedTranscription(for: frozen.take)
+        if transcriptions[takeID] == nil, !transcribingIDs.contains(takeID) { transcribeApprovedAudio(takeID) }
+        // A transcription already started by audio approval is shared, not duplicated.
+        while transcribingIDs.contains(takeID) {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try Task.checkCancellation()
+        loadCachedTranscription(for: frozen.take)
+        guard let transcript = transcriptions[takeID], transcript.hasValidTimings,
+              transcript.audioSHA256 == ClipboardAudioTranscription.fingerprint(frozen.audio) else {
+            throw recordingError(transcriptionErrors[takeID] ?? "Valid word timings are not available for this approved WAV.")
+        }
+        guard approvedVersions[frozen.take.groupID] == takeID else { throw recordingError("The audio approval changed while loading practice material.") }
+        return (frozen.take, frozen.audio, transcript)
+    }
+
     private func recordingError(_ message: String) -> NSError {
         NSError(domain: "ClonedClipboardAudio", code: 6, userInfo: [NSLocalizedDescriptionKey: message])
     }

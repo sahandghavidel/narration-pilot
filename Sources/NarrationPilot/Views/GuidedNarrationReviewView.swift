@@ -38,9 +38,9 @@ struct GuidedNarrationReviewView: View {
                         Button("End Guided Review") { review.end() }
                     }
                 }
-                KeyboardShortcuts.Recorder("Approve current review / audio", name: .approveClonedClipboardAudio)
-                KeyboardShortcuts.Recorder("Improve wording / regenerate audio", name: .regenerateClonedClipboardAudio)
-                Text("Approve wording to automatically prepare and preview cloned audio. During audio review, approve saves the exact candidate and redo regenerates the same wording and voice. Busy presses are ignored. No recording starts; existing macOS speech controls are unchanged.")
+                KeyboardShortcuts.Recorder("Approve wording / audio / practice", name: .approveClonedClipboardAudio)
+                KeyboardShortcuts.Recorder("Improve / regenerate / redo practice", name: .regenerateClonedClipboardAudio)
+                Text("Approve wording to automatically prepare and preview cloned audio. During audio review, approve saves the exact candidate and redo regenerates the same wording and voice. Audio approval prepares guided practice. After a finished practice, approve requests recording once the agent restores the starting screen. Existing macOS speech controls are unchanged.")
                     .font(.caption2).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
         }

@@ -40,6 +40,7 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
 
             GuidedNarrationReviewView(review: appModel.guidedNarrationReview)
+            GuidedPracticeView(practice: appModel.guidedPractice, review: appModel.guidedNarrationReview)
 
             AgentFeedbackView(feedback: appModel.agentFeedback)
 

@@ -14,6 +14,7 @@ final class AppModel: ObservableObject {
     private let clonedFocuSeeControl = ClonedFocuSeeControl()
     let agentFeedback = AgentFeedbackPublisher()
     let guidedNarrationReview = GuidedNarrationReview()
+    let guidedPractice = GuidedPracticeSession()
     private var guidedNarrationSpeech: TTSManager?
     private var guidedNarrationSpeechSubscriptions = Set<AnyCancellable>()
 
@@ -3391,6 +3392,74 @@ final class AppModel: ObservableObject {
             try self.clonedClipboardAudio.approveGuidedAudio(takeID: id, narration: narration, voiceID: voiceID)
         }
         guidedNarrationReview.stopAudioPreview = { [weak self] id in self?.clonedClipboardAudio.stopGuidedPreview(takeID: id) }
+        guidedPractice.loadAssets = { [weak self] approval in
+            guard let self, let id = approval.audio.versionID else { throw CancellationError() }
+            let material = try await self.clonedClipboardAudio.approvedPracticeMaterial(takeID: id,
+                narration: approval.draft.narration, voiceID: approval.audio.voice.id)
+            let context = GuidedPracticeContext(draft: approval.draft, audioApprovalID: approval.id,
+                audioVersionID: id, audioSHA256: material.transcription.audioSHA256, duration: material.take.duration,
+                audioPath: self.clonedClipboardAudio.audioURL(for: material.take).path,
+                transcriptionPath: self.clonedClipboardAudio.transcriptionURL(for: material.take).path,
+                words: material.transcription.words.map { GuidedPracticeWord(word: $0.word, start: $0.start, end: $0.end) })
+            return GuidedPracticeAssets(context: context, audio: material.audio)
+        }
+        guidedPractice.canPractice = { [weak self] in
+            guard let self else { return "Narration Pilot is unavailable." }
+            guard self.speechState == .idle, self.pendingReadTask == nil, self.activeReadSequenceID == nil,
+                  !self.approvedAudioRecording.isBusy, !self.clonedClipboardAudio.isGenerating,
+                  !self.clonedClipboardAudio.isPreviewing else { return "Finish other speech/audio/recording before practice." }
+            guard await self.clonedFocuSeeControl.sample() == .paused else { return "Practice requires FocuSee paused in an active recording session." }
+            return nil
+        }
+        guidedPractice.prompt = { [weak self] text in await self?.guidedNarrationReview.announcePractice(text) ?? false }
+        guidedPractice.recordAudio = { [weak self] assets in
+            guard let self else { throw CancellationError() }
+            try Task.checkCancellation()
+            let settings = self.approvedAudioRecording.settings.normalized
+            guard settings.fastMode || (settings.before == .ensureRecording && settings.after == .ensurePaused) else {
+                throw NSError(domain: "GuidedPractice", code: 1, userInfo: [NSLocalizedDescriptionKey: "Enable Fast mode or verified Resume/Pause actions for guided recording."])
+            }
+            guard self.speechState == .idle, self.pendingReadTask == nil, self.activeReadSequenceID == nil,
+                  self.guidedNarrationSpeech == nil || self.guidedNarrationSpeech?.state == .idle,
+                  !self.clonedClipboardAudio.isGenerating, !self.clonedClipboardAudio.isPreviewing,
+                  !self.approvedAudioRecording.isBusy else {
+                throw NSError(domain: "GuidedPractice", code: 1, userInfo: [NSLocalizedDescriptionKey: "Finish other speech or recording before starting the approved take."])
+            }
+            guard let task = self.approvedAudioRecording.start(audio: assets.audio, takeID: assets.context.audioVersionID),
+                  let sessionID = self.approvedAudioRecording.activeSessionID else {
+                throw NSError(domain: "GuidedPractice", code: 1, userInfo: [NSLocalizedDescriptionKey: self.approvedAudioRecording.message])
+            }
+            await task.value
+            guard self.approvedAudioRecording.phase == "completed" else {
+                throw NSError(domain: "GuidedPractice", code: 1, userInfo: [NSLocalizedDescriptionKey: self.approvedAudioRecording.message])
+            }
+            return GuidedPracticeRecordingResult(sessionID: sessionID, duration: self.approvedAudioRecording.duration, message: self.approvedAudioRecording.message)
+        }
+        guidedPractice.stopPrompt = { [weak self] in self?.guidedNarrationReview.stopPracticePrompt() }
+        guidedPractice.cancelRecording = { [weak self] pause in self?.approvedAudioRecording.cancel(pauseRecording: pause) }
+        guidedPractice.recordingProgress = { [weak self] in
+            guard let self else { return (0, 0, "notRecording", nil) }
+            return (self.approvedAudioRecording.livePlaybackTime, self.approvedAudioRecording.duration,
+                    self.approvedAudioRecording.playbackClockSource, self.approvedAudioRecording.activeSessionID)
+        }
+        guidedNarrationReview.onAudioApproved = { [weak self] approval in self?.guidedPractice.begin(approval) }
+        guidedNarrationReview.onEnd = { [weak self] in self?.guidedPractice.end() }
+        guidedNarrationReview.onInterrupt = { [weak self] in self?.guidedPractice.suspend(pauseRecording: false) }
+        guidedNarrationReview.practiceApprove = { [weak self] in self?.guidedPractice.approve() ?? false }
+        guidedNarrationReview.practiceRedo = { [weak self] in
+            guard let self else { return false }
+            if !self.guidedPractice.active, self.guidedNarrationReview.active, let approval = self.guidedNarrationReview.audioDecision {
+                self.guidedPractice.begin(approval); return true
+            }
+            return self.guidedPractice.redo()
+        }
+        guidedNarrationReview.practiceSummary = { [weak self] in
+            guard let self, self.guidedPractice.active else { return nil }
+            return ["phase": self.guidedPractice.phase, "runID": self.guidedPractice.runID?.uuidString ?? "",
+                    "message": self.guidedPractice.message]
+        }
+        if !guidedNarrationReview.active { guidedPractice.end() }
+        guidedPractice.start()
         guidedNarrationReview.start()
     }
 
@@ -3402,7 +3471,10 @@ final class AppModel: ObservableObject {
             return await self.clonedFocuSeeControl.sample()
         }
         Task { [weak self] in await self?.clonedFocuSeeControl.prime() }
-        clonedClipboardAudio.approvedRecordingIsActive = { [weak self] in self?.approvedAudioRecording.isBusy ?? false }
+        clonedClipboardAudio.approvedRecordingIsActive = { [weak self] in
+            guard let self else { return false }
+            return self.approvedAudioRecording.isBusy || self.guidedPractice.active
+        }
         approvedAudioRecording.speechIsIdle = { [weak self] in
             guard let self else { return false }
             return self.speechState == .idle && self.pendingReadTask == nil

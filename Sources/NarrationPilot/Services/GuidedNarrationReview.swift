@@ -68,6 +68,7 @@ struct GuidedNarrationSnapshot: Codable {
     var audioDecision: GuidedAudioDecision?
     var audioAcknowledged: Bool?
     var audioBusy: Bool?
+    var practice: [String: String]?
 }
 
 /// Local guided wording/audio handshake. Frozen wording is passed directly to
@@ -87,6 +88,12 @@ final class GuidedNarrationReview: ObservableObject {
     @Published private(set) var audioDecision: GuidedAudioDecision?
     @Published private(set) var audioAcknowledged = false
     @Published private(set) var audioBusy = false
+    var onAudioApproved: ((GuidedAudioDecision) -> Void)?
+    var onEnd: () -> Void = {}
+    var onInterrupt: () -> Void = {}
+    var practiceApprove: () -> Bool = { false }
+    var practiceRedo: () -> Bool = { false }
+    var practiceSummary: () -> [String: String]? = { nil }
     var selectedAudioVoice: () -> GuidedAudioVoice? = { nil }
     var prepareAudio: (@MainActor (String, String, Bool, @MainActor () -> Bool) async throws -> GuidedPreparedAudio)?
     var previewAudio: @MainActor (GuidedPreparedAudio, @MainActor () -> Bool) async throws -> Void = { _, _ in }
@@ -189,6 +196,7 @@ final class GuidedNarrationReview: ObservableObject {
     }
 
     func interruptSpeech() {
+        onInterrupt()
         generation = UUID(); checkingSpeech = false
         let wasAudioReview = audioReview != nil && audioDecision == nil
         cancelAudio(); stopOwnedSpeech()
@@ -203,11 +211,13 @@ final class GuidedNarrationReview: ObservableObject {
     /// Guided mode owns A/G in every stage; busy/repeated presses never fall
     /// through to standalone audio actions or approve a later stage.
     @discardableResult func approve() -> Bool {
+        if active, practiceApprove() { return true }
         if active, phase == "audioReady", !audioBusy { approveCurrentAudio() }
         else { choose("approveNarration") }
         return active
     }
     @discardableResult func improve() -> Bool {
+        if active, practiceRedo() { return true }
         if active, ["approved", "audioReady", "audioFailed", "audioSuspended"].contains(phase), !audioBusy { generateAudio(forceNewVersion: true) }
         else { choose("improveNarration") }
         return active
@@ -261,7 +271,28 @@ final class GuidedNarrationReview: ObservableObject {
         let token = UUID(); speechToken = token; publish(); speak(text, token)
     }
 
+    /// Practice uses the same isolated spoken-status route, after any audio
+    /// approval confirmation finishes. It does not alter ordinary macOS speech.
+    func stopPracticePrompt() {
+        generation = UUID(); stopOwnedSpeech()
+    }
+
+    func announcePractice(_ text: String) async -> Bool {
+        let epoch = generation
+        for _ in 0..<200 {
+            guard active, generation == epoch, !Task.isCancelled else { return false }
+            if speechToken == nil { break }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        guard speechToken == nil else { return false }
+        do {
+            try await sayAndWait(text, isCurrent: { self.active && self.generation == epoch && !Task.isCancelled })
+            return true
+        } catch { return false }
+    }
+
     func end() {
+        onEnd()
         generation = UUID(); checkingSpeech = false
         cancelAudio(); stopOwnedSpeech()
         active = false; phase = "inactive"; message = "Guided review ended. Standalone audio shortcuts are available."
@@ -358,6 +389,7 @@ final class GuidedNarrationReview: ObservableObject {
             stopAudioPreview(id)
             phase = "audioApproved"; message = "Exact cloned audio approved. Word timings are saved in the background; recording is not started."
             publish()
+            if let onAudioApproved { onAudioApproved(event); return }
             let epoch = generation
             Task { [weak self] in
                 guard let self, self.audioDecision?.id == event.id else { return }
@@ -471,7 +503,7 @@ final class GuidedNarrationReview: ObservableObject {
     }
     private func publish() {
         do {
-            try write(GuidedNarrationSnapshot(appRunning: running, pid: ProcessInfo.processInfo.processIdentifier, updatedAt: Date(), active: active, phase: phase, message: message, draft: draft, decision: decision, acknowledged: acknowledged, speechActive: speechToken != nil, audioReview: audioReview, audioDecision: audioDecision, audioAcknowledged: audioAcknowledged, audioBusy: audioBusy), to: directory.appendingPathComponent("status.json"))
+            try write(GuidedNarrationSnapshot(appRunning: running, pid: ProcessInfo.processInfo.processIdentifier, updatedAt: Date(), active: active, phase: phase, message: message, draft: draft, decision: decision, acknowledged: acknowledged, speechActive: speechToken != nil, audioReview: audioReview, audioDecision: audioDecision, audioAcknowledged: audioAcknowledged, audioBusy: audioBusy, practice: practiceSummary()), to: directory.appendingPathComponent("status.json"))
         } catch { message = "Could not save narration review status: \(error.localizedDescription)" }
     }
     private func error(_ text: String) -> NSError { NSError(domain: "GuidedNarrationReview", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }

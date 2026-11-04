@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AppModel.shared.guidedPractice.stop()
         AppModel.shared.guidedNarrationReview.stop()
         AppModel.shared.agentFeedback.stop()
         RuntimeReliability.shared.stop()

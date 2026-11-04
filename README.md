@@ -234,13 +234,25 @@ settings, and shortcuts are unchanged.
    same wording/voice, keeping previous versions and approvals. Command–Shift–A
    approves the exact previewed version and creates a separate audio approval
    event. Tiny.en word timings fill in the background; they do not delay approval.
+4. Audio approval automatically prepares **guided practice**. The active agent
+   reads the exact WAV duration and saved word timings, saves the starting screen
+   and cursor checkpoint, and submits a plan anchored to word indices or audio
+   times. Practice plays the approved WAV while the agent performs those actions,
+   with FocuSee observed paused.
+5. Once both playback and reported practice actions finish, A approves practice
+   and requests recording; G restores the same checkpoint and practices again
+   with the same audio. Recording starts only after the agent restores/verifies
+   that original checkpoint and explicitly starts the approved take. The same
+   practiced plan and WAV are used; original recording settings/idle waiting and
+   Fast mode are retained. No new TTS is generated for practice or recording.
 
 A/G presses during generation, spoken stage transitions, or locked decisions are
 consumed without approving a later stage or falling through to standalone audio
 commands. A candidate must actually start previewing before it becomes approvable.
 Changing clipboard text or library selection cannot change the approved guided
 wording or candidate. If the selected candidate was not the last audio previewed,
-replay the guided audio before approving it. No recording starts automatically.
+replay the guided audio before approving it. Wording/audio approval alone never
+starts recording; a finished practice must be separately approved.
 
 Wording review requires other app-owned speech/audio/recording to be idle but is
 independent of FocuSee's AX detector. Cloned-audio generation/preview retains the
@@ -270,11 +282,79 @@ python3 scripts/guided-narration-review.py watch --session-id SESSION_UUID --rev
 python3 scripts/guided-narration-review.py submit --session-id SESSION_UUID --scene-id calculator-test --revision 2 --event-id IMPROVEMENT_EVENT_UUID --text "Click equals. The result is twenty."
 # Wording approval is intermediate; keep the session open through audio approval:
 python3 scripts/guided-narration-review.py watch --session-id SESSION_UUID --revision 2 --stage audio --ack --timeout 55
+# Keep guided review open for practice/recording; end it after the completed take:
 python3 scripts/guided-narration-review.py end --session-id SESSION_UUID
 ```
 
 `submit` returns a receipt/session ID. A waiting result is not approval. Use
 `status`, `replay`, or `generate-audio` to resume a saved session explicitly.
+
+### Guided practice and recording bridge
+
+`GuidedPracticeSession` coordinates audio playback, practice approval, and a
+recording request. It does not run arbitrary UI scripts: the active agent uses
+AgentCursor for real mouse actions, as in the recording skill. New practice
+requests and record requests are delivered through the private `Practice/`
+subdirectory of the guided-review bridge. `status.json` exposes session/run IDs,
+phase, the actual player clock, duration, word index, and action completion.
+The immutable context contains approved narration, version ID, WAV SHA256, local
+WAV/sidecar paths, duration, and saved word timings. A missing sidecar shares or
+retries transcription of the existing approved audio; it never regenerates TTS.
+
+The app waits for an action plan and a starting-state gate before practice.
+Plan actions need unique IDs, descriptions, and either a zero-based `wordIndex`
+or `atSeconds` within the audio duration. Word anchors resolve to that saved
+word's start time. The first plan locks a `checkpointID`; redo and recording must
+use that same starting checkpoint. Gates require a matched flag, a verification
+no more than 30 seconds old, and a real local evidence artifact. The agent must
+actually compare screen/cursor state; these fields are an auditable report, not
+an automatic screenshot comparison.
+
+Before **each** practice or recording, arm a real-cursor action runner against
+the exact run ID before starting playback. Use the WAV clock and word anchors,
+not tool-call wall time. Stop old actions if the run ID changes or the phase
+becomes blocked/suspended. Recording actions must additionally wait for actual
+WAV playback and fresh observed FocuSee recording (existing feedback), then log
+their execution and visible result. Required action timings and the starting
+checkpoint are the same as the accepted practice. Aim to finish within narration;
+recording input-idle waiting still supports meaningful actions that run longer.
+
+```sh
+python3 scripts/guided-practice.py watch --session-id SESSION_UUID --kind practiceRequested --ack --timeout 55
+python3 scripts/guided-practice.py context --run-id RUN_UUID
+python3 scripts/guided-practice.py plan --run-id RUN_UUID --plan-file /absolute/path/plan.json
+python3 scripts/guided-practice.py start --run-id RUN_UUID --gate-file /absolute/path/fresh-gate.json
+python3 scripts/guided-practice.py finish --run-id RUN_UUID --results-file /absolute/path/practice-actions.json
+# The real user's A approval creates this next event; no synthetic approval:
+python3 scripts/guided-practice.py watch --session-id SESSION_UUID --kind recordRequested --ack --timeout 55
+# Restore the exact original screen/cursor and save a new gate before this:
+python3 scripts/guided-practice.py record --run-id RUN_UUID --gate-file /absolute/path/record-gate.json
+python3 scripts/guided-practice.py record-finish --run-id RUN_UUID --results-file /absolute/path/record-actions.json
+python3 scripts/guided-practice.py watch --session-id SESSION_UUID --kind recordingCompleted --ack --timeout 55
+```
+
+Example plan input: `{"checkpointID":"UUID","actions":[{"id":"equals","description":"Click Equals","wordIndex":7}]}`.
+The helper fills plan/audio identities from the current context. A gate includes
+`checkpointID`, ISO8601 `verifiedAt`, `matched:true`, and an absolute
+`evidencePath`. Action result arrays contain `actionID`, actual
+`startedAtSeconds`, `completedAtSeconds`, and `succeeded`; recording results also
+require `captureState:"recording"` for every action. Empty action arrays support
+intentional hold scenes. Report results only after performing/observing actions.
+The app requires both WAV completion and all action results before offering
+practice approval or announcing a completed recorded scene. Fast mode's pause
+command remains unverified by the recorder controller; action reports and the
+saved footage still require the agent/user's normal review.
+
+G can interrupt a practice and request another attempt, keeping all approved
+audio. A/G during preparation cannot approve a later stage. Practice-ready A/G
+can interrupt the spoken ready cue. Recording requires that actual practice
+approval, the frozen plan, a fresh restoration gate, and valid recording
+Resume/Pause settings or Fast mode. An interrupted/restarted session requires a
+fresh practice, never automatic playback or recording. Other audio preparation
+is blocked while guided practice owns the approved material. **Stop Guided Take**
+cancels practice/recording with the existing pause cleanup. Ending guided review
+restores standalone audio shortcuts. No existing macOS speech engine or shortcut
+settings are changed.
 
 ### Approved audio recording
 

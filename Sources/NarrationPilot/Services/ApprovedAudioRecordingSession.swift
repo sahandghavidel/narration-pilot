@@ -74,6 +74,11 @@ final class ApprovedAudioRecordingSession: ObservableObject {
     @Published private(set) var message = "Copy approved narration, then record its saved audio."
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
+    var activeSessionID: UUID? { sessionID }
+    var playbackClockSource: String { audioClockSource }
+    var livePlaybackTime: TimeInterval {
+        phase == "playing" ? min(duration, max(0, player?.currentTime ?? elapsed)) : elapsed
+    }
     var remaining: TimeInterval { max(0, duration - elapsed) }
 
     var speechIsIdle: () -> Bool = { true }
