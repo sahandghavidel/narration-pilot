@@ -262,7 +262,7 @@ final class GuidedNarrationReview: ObservableObject {
         let token = UUID(); speechToken = token
         phase = "reading"; message = "Reading narration. Approval accepts these exact words; redo requests an improved draft."
         publish()
-        speak("Review narration. \(draft!.narration) End of narration. Use your approval shortcut to approve the wording, or your redo shortcut to request improvement.", token)
+        speak("Narration ready. \(draft!.narration) Approve or improve.", token)
     }
 
     private func announce(_ text: String, expectedGeneration: UUID) async {
@@ -319,7 +319,7 @@ final class GuidedNarrationReview: ObservableObject {
             defer { if self.audioOperationID == operation { self.audioBusy = false; self.audioTask = nil; self.publish() } }
             let isCurrent: @MainActor () -> Bool = { self.active && self.generation == epoch && self.audioOperationID == operation && !Task.isCancelled }
             do {
-                try await self.sayAndWait(forceNewVersion ? "Generating another cloned audio version." : "Narration approved. Preparing cloned audio.", isCurrent: isCurrent)
+                try await self.sayAndWait(forceNewVersion ? "Regenerating audio." : "Preparing audio.", isCurrent: isCurrent)
                 let prepared = try await prepareAudio(draft.narration, voice.id, forceNewVersion, isCurrent)
                 guard isCurrent() else { return }
                 guard prepared.duration.isFinite, prepared.duration > 0 else { throw self.error("Cloned audio has no playable duration.") }
@@ -354,7 +354,7 @@ final class GuidedNarrationReview: ObservableObject {
     }
 
     private func playAudioCandidate(_ audio: GuidedPreparedAudio, isCurrent: @MainActor () -> Bool) async throws {
-        try await sayAndWait("Review cloned audio. Use your approval shortcut to save this version, or redo to generate another.", isCurrent: isCurrent)
+        try await sayAndWait("Review audio.", isCurrent: isCurrent)
         try await previewAudio(audio, isCurrent)
         guard isCurrent() else { stopAudioPreview(audio.versionID); return }
         phase = "audioReady"; message = "Review cloned audio: approve saves this exact version; redo generates another with the same wording and voice."

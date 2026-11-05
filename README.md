@@ -356,6 +356,46 @@ cancels practice/recording with the existing pause cleanup. Ending guided review
 restores standalone audio shortcuts. No existing macOS speech engine or shortcut
 settings are changed.
 
+### Prepared session runner and separate skill
+
+The optional persistent runner removes per-take script construction and most
+agent/tool round trips. Prepare the scene's visible action targets and reversible
+restore recipe before narration is announced (or during its review). One Node /
+AgentCursor process handles later practice requests, G redo and A-to-record,
+using the approved WAV clock and resolved word cues. The native SDK stays warm;
+movement pacing is reset to the same seed per attempt. Other speech and A/G
+bindings retain their existing behavior; guided spoken announcements are shorter.
+
+```sh
+python3 scripts/guided-session.py start
+python3 scripts/guided-session.py prepare --scene-file /absolute/work/scene.json
+python3 scripts/guided-session.py wait --timeout 55 --after-sequence -1
+python3 scripts/guided-session.py status
+python3 scripts/guided-session.py stop
+```
+
+The runner compares stable window/AX state, cursor and fresh images at each
+restore. Meaningful mismatches block playback/recording for agent repair. If the
+existing native screenshot permission is unavailable, it requests fresh CUA
+images from the active agent; it never bypasses permissions or substitutes old
+screenshots. No approvals are synthesized. A new narration-improvement request
+wakes the active agent's bounded event wait; submitting its new revision lets
+the prepared runner continue. New scenes still need agent-authored narration and
+actions; an ended chat is not automatically awakened.
+
+Runtime state, commands and private evidence live in
+`GuidedSessionRunner/` alongside the existing guided app bridge. End the completed
+app review before preparing the next scene; the same process can inherit its
+saved ending checkpoint. Stop on unplanned changes or failed actions rather than
+continuing an unchecked batch. Only reversible, explicitly practice-safe actions
+belong in the automatic runner.
+
+The new, separately installable skill is
+[`skills/guided-scene-recording/SKILL.md`](skills/guided-scene-recording/SKILL.md).
+It documents the scene schema, word aliases/lead times, evidence requests, repair
+commands, and the hands-free flow. The existing
+`record-narration-pilot-tutorial` skill is deliberately unchanged.
+
 ### Approved audio recording
 
 Under **Approved Audio Recording**, assign the separate **Shortcut** recorder or

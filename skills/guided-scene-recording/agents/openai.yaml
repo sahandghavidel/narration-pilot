@@ -1,0 +1,4 @@
+interface:
+  display_name: "Guided Scene Recording"
+  short_description: "Fast hands-free A/G scene recording"
+  default_prompt: "Use $guided-scene-recording for a hands-free narration, audio, practice, and recording session."

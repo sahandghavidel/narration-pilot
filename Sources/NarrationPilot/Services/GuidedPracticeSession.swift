@@ -209,7 +209,7 @@ final class GuidedPracticeSession: ObservableObject {
         do {
             try emit("recordRequested")
             phase = "recordRequested"; message = "Practice approved. Waiting for the agent to restore the starting checkpoint before recording."
-            notify("Practice approved. Preparing recording.")
+            notify("Preparing recording.")
         } catch { block(error.localizedDescription) }
         return true
     }
@@ -252,7 +252,7 @@ final class GuidedPracticeSession: ObservableObject {
         let operation = UUID(); operationID = operation; publish()
         worker = Task { [weak self] in
             guard let self, self.operationID == operation, self.active, !Task.isCancelled else { return }
-            guard await self.prompt("Preparing practice with the approved audio and word timings."), self.operationID == operation, self.active else {
+            guard await self.prompt("Preparing practice."), self.operationID == operation, self.active else {
                 if self.operationID == operation { self.promptBusy = false; self.block("Spoken practice prompt could not finish. Use redo when idle.") }; return
             }
             self.promptBusy = false
@@ -310,7 +310,7 @@ final class GuidedPracticeSession: ObservableObject {
         guard operationID == operation, runID == expectedRun, active else { prepared.stop(); throw CancellationError() }
         if let issue { prepared.stop(); promptBusy = false; block(issue); throw error(issue) }
         guard operationID == operation, runID == expectedRun, active else { prepared.stop(); throw CancellationError() }
-        guard await prompt("Practice starting. Recording stays paused."), operationID == operation, runID == expectedRun, active else {
+        guard await prompt("Practice."), operationID == operation, runID == expectedRun, active else {
             prepared.stop()
             if operationID == operation, active { promptBusy = false; block("Practice prompt interrupted.") }
             throw CancellationError()
@@ -337,7 +337,7 @@ final class GuidedPracticeSession: ObservableObject {
     private func finishIfReady() {
         guard audioFinished, actionsFinished, ["practicing", "waitingForActions"].contains(phase) else { return }
         phase = "practiceReady"; message = "Practice finished. Approve to restore the start and record; redo to practice again with this same audio."
-        notify("Practice finished. Use approve to record, or redo to practice again.")
+        notify("Practice finished. Approve or redo.")
     }
 
     private func beginRecording(gate: GuidedPracticeGate?) throws {
