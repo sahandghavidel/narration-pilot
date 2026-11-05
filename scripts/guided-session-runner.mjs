@@ -54,22 +54,32 @@ async function minimizeCodex(){
 async function observe(){const views={};for(const app of scene.config.observeApps){views[app]=normalize(await desktop.view({app,max:scene.config.maxElements??200}));lastReadApp=app;}return {views,cursor:await desktop.actions.cursor()}}
 function assertSnapshot(current,baseline){if(stable(current)!==stable(baseline))throw Error('Starting screen/cursor differs from the immutable checkpoint.');}
 function validateAction(a){
+ if(a.systemOverlay && (!['move','click','highlight'].includes(a.verb)||![a.target?.x,a.target?.y].every(Number.isFinite)))throw Error('System overlays require a coordinate pointer action.');
  if(a.verb==='highlight' && ![a.target?.x,a.target?.y,a.end?.x,a.end?.y].every(Number.isFinite))throw Error('Highlight requires visible text start and end coordinates.');
  if(a.target?.x!==undefined&&(!Number.isFinite(a.target.x)||!Number.isFinite(a.target.y)))throw Error('Coordinate targets must be finite');if(!a.id||!['click','move','highlight','type','key','scroll','activate','hold'].includes(a.verb)||a.practiceSafe!==true)throw Error('Every action must have an ID, supported verb, and explicit practiceSafe:true.');if(a.verb==='type'&&a.submit)throw Error('Submit actions require separate agent handling; they cannot be rehearsed automatically.');}
 async function target(a){if(a.target?.x!==undefined)return a.target;if(!a.target?.name)throw Error('Action target is missing');const app=a.app??scene.config.startingApp;const v=await desktop.view({app,max:scene.config.maxElements??200});lastReadApp=app;const found=v.elements.filter(e=>e.name===a.target.name&&(!a.target.role||e.role===a.target.role));if(found.length!==1)throw Error('Target must match exactly one visible element: '+a.target.name);const e=found[0];return {x:e.rect.x+e.rect.width/2,y:e.rect.y+e.rect.height/2};}
 async function perform(a){
  if(a.verb==='activate'){await activate(a.app);return}
  const app=a.app??scene.config.startingApp;
- if(lastReadApp!==app){await desktop.view({app,max:scene.config.maxElements??200});lastReadApp=app;}
- if(a.verb==='click')await desktop.click(scene.targets?.[a.id]??await target(a));
- else if(a.verb==='move')await desktop.move(scene.targets?.[a.id]??await target(a));
- else if(a.verb==='highlight'){
-  await desktop.drag(a.target,a.end,{durationMs:350});
-  await desktop.move({x:a.end.x+8,y:a.end.y+1});
+ if(a.systemOverlay){
+  // Target the visible system menu or panel without raising its underlying browser.
+  const pointer=new sdk.DesktopService(new SessionPersona({seed:scene.config.seed??4103}),{background:false,showCursor:false});
+  try{await performPointer(pointer,a,a.target)}finally{pointer.close()}
+  return;
  }
+ if(lastReadApp!==app){await desktop.view({app,max:scene.config.maxElements??200});lastReadApp=app;}
+ if(['click','move','highlight'].includes(a.verb))await performPointer(desktop,a,scene.targets?.[a.id]??await target(a));
  else if(a.verb==='type')await desktop.type(a.text,{submit:false});
  else if(a.verb==='key')await desktop.key(a.key);
  else if(a.verb==='scroll')await desktop.scroll({...a.scroll,style:'trackpad'});
+}
+async function performPointer(pointer,a,start){
+ if(a.verb==='click')await pointer.click(start);
+ else if(a.verb==='move')await pointer.move(start);
+ else{
+  await pointer.drag(start,a.end,{durationMs:350});
+  await pointer.move({x:a.end.x+8,y:a.end.y+1});
+ }
 }
 async function images(label){
  const apps=scene.config.observeApps,files={};
@@ -118,7 +128,7 @@ async function execute(run,mode,plan){
 }
 // Compare what viewers will actually see. Labels and regenerated IDs are not improvements.
 function actionSignature(actions){
- return hash(actions.map(({verb,app,target,end,text,key,scroll,cue,atSeconds})=>({verb,app,target,end,text,key,scroll,cue,atSeconds})));
+ return hash(actions.map(({verb,app,target,end,systemOverlay,text,key,scroll,cue,atSeconds})=>({verb,app,target,end,systemOverlay,text,key,scroll,cue,atSeconds})));
 }
 function practicedPath(sessionID){return path.join(root,'scenes',sessionID,'practiced-actions.json')}
 function priorPractice(sessionID){
