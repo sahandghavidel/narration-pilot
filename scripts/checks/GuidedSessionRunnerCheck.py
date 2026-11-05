@@ -109,7 +109,7 @@ class App:
 
 
 class RunnerCheck(unittest.TestCase):
-    def run_case(self, denied=False, bad=False):
+    def run_case(self, denied=False, bad=False, reappear=False):
         with tempfile.TemporaryDirectory(prefix='guided-session-check-') as folder:
             root=Path(folder);app=App(root/'app');worker=root/'worker'
             env=dict(os.environ,GUIDED_RUNNER_FIXTURE_ROOT=str(root/'app'),GUIDED_RUNNER_DENY_CAPTURE=str(int(denied)),GUIDED_RUNNER_BAD_RECORD_IMAGE=str(int(bad)))
@@ -160,7 +160,9 @@ class RunnerCheck(unittest.TestCase):
                             app.state.update(active=False,phase='inactive');app.guide=dict(active=False,phase='inactive');app.sid=uid();app.starting_text='20'
                             config.update(sessionID=app.sid,sceneID='fixture-next',baselinePath=state['endingCheckpoint'],
                                           actions=[dict(id='hold',verb='hold',atSeconds=0,practiceSafe=True)],restoreActions=[])
-                            scene.write_text(json.dumps(config));cli('prepare','--scene-file',str(scene))
+                            scene.write_text(json.dumps(config))
+                            if reappear:(root/'app/codex-front').touch()
+                            cli('prepare','--scene-file',str(scene))
                             launched=False;improvement_sent=False;improvement_handled=False;second_scene=True
                             continue
                         self.assertEqual(app.practice_finishes,3 if second_scene else 2)
@@ -171,6 +173,8 @@ class RunnerCheck(unittest.TestCase):
                 self.assertFalse(app.errors,app.errors)
                 if denied:self.assertGreaterEqual(len(supplied),4) # Initial, practice, redo, record, ending.
                 trace=[json.loads(x) for x in (root/'app/trace.jsonl').read_text().splitlines()]
+                self.assertEqual(sum(x['verb']=='minimize' for x in trace),2 if reappear else 1)
+                self.assertEqual(sum(x['verb']=='activate' and x['value']=='ChatGPT' for x in trace),2 if reappear else 1)
                 self.assertEqual(sum(x['verb']=='click' and x['value']=='One' for x in trace),2 if bad else 3)
                 self.assertTrue(all(x['phase']!='recording' for x in trace if x['verb']=='click' and x['value']=='All Clear'))
             finally:
@@ -179,6 +183,7 @@ class RunnerCheck(unittest.TestCase):
                     except Exception:os.kill(started['pid'],15)
                 app.close()
 
+    def test_minimize_again_only_after_codex_reappears(self):self.run_case(reappear=True)
     def test_native_capture_redo_and_record(self):self.run_case()
     def test_fresh_cua_evidence_fallback(self):self.run_case(denied=True)
     def test_visual_mismatch_blocks_recording(self):self.run_case(bad=True)

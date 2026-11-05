@@ -7,6 +7,8 @@ description: Run Sahand’s hands-free Narration Pilot workflow using spoken wor
 
 Use a prepared scene and one persistent runner to minimize delay between Sahand’s A/G decisions. Keep Codex minimized during practice/recording. This is a new workflow: **do not modify `record-narration-pilot-tutorial` or its resources**. Do not substitute that older skill’s silent rehearsal or Command–2/3 speech shortcuts for this workflow.
 
+Minimize Codex once before the first checkpoint and keep it minimized for the entire session, including A/G review, redo, recording, and scene transitions. Do not activate or restore it for screenshots, status checks, or routine restoration. The persistent runner remembers the initial minimization; later gates minimize again only when fresh app state shows Codex has become the foreground app. If it was deliberately reopened for a repair, minimize it again while capture is paused before resuming. Continue evidence collection and tool work in the background.
+
 ## The user’s controls
 
 Narration Pilot announces the active stage. Read actual saved bindings; Sahand currently uses Command–Shift–A and Command–Shift–G.
