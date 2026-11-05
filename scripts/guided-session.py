@@ -65,7 +65,7 @@ def listen_for_chapter_request(review_root):
                     if (practice.get('active') and practice['phase'] == 'practiceRequested'
                             and approval.get('draft') == draft
                             and approval.get('id') == (review.get('audioDecision') or {}).get('id')):
-                        return dict(request='practice', draft=draft, runID=practice['runID'])
+                        return dict(request='improvePractice' if practice.get('attempt', 1) > 1 else 'practice', draft=draft, runID=practice['runID'])
         time.sleep(.25)
 
 
@@ -82,6 +82,7 @@ def main():
     sub.add_parser('status')
     for name in ['prepare', 'update']:
         prepare = sub.add_parser(name)
+        if name == 'update': prepare.add_argument('--run-id', help='Current run ID for a practice improvement')
         prepare.add_argument('--scene-file', type=Path, required=True)
     sub.add_parser('resume')
     evidence = sub.add_parser('evidence')
@@ -123,7 +124,7 @@ def main():
     elif args.command == 'listen':
         result = listen_for_chapter_request(args.review_directory)
     elif args.command in ['prepare', 'update']:
-        result = command(root, args.command, scene=load(args.scene_file))
+        result = command(root, args.command, scene=load(args.scene_file), runID=getattr(args, 'run_id', None))
     elif args.command == 'resume':
         result = command(root, 'resume')
     elif args.command == 'evidence':

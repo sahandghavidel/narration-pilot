@@ -17,14 +17,14 @@ struct GuidedPracticeView: View {
                         HStack {
                             Button("Approve Practice & Record") { practice.approve() }
                                 .disabled(practice.phase != "practiceReady")
-                            Button("Redo Practice") { practice.redo() }
+                            Button("Improve Practice") { practice.redo() }
                                 .disabled(!["practiceReady", "practicing", "waitingForActions", "waitingForRecordActions", "recordRequested", "blocked", "suspended"].contains(practice.phase))
                         }
                         Button("Stop Guided Take") { practice.suspend(pauseRecording: true) }
                     } else if let approval = review.audioDecision {
                         Button("Prepare Practice (Redo shortcut)") { practice.begin(approval) }
                     }
-                    Text("A approves a finished practice and asks the agent to restore the start before recording. G repeats practice with the same approved WAV. Practice plays audio while FocuSee is paused; saved word timings guide the agent's actions. An active agent session is required.")
+                    Text("A approves a finished practice and asks the agent to restore the start before recording. G asks the agent to improve the screen actions and practice again with the approved voice. Practice plays audio while FocuSee is paused; saved word timings guide the agent's actions. An active agent session is required.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }.padding(4).frame(maxWidth: .infinity, alignment: .leading)
             }

@@ -110,6 +110,12 @@ async function execute(run,mode,plan){
  const ending=await observe();atomic(path.join(scene.dir,`${run}-${mode}-actions.json`),{results,ending});scene.lastActionEnding=ending;
  await appCommand(mode==='record'?'recordFinish':'finish',{results});emit('actionsFinished',{mode,runID:run,results});
 }
+// Compare what viewers will actually see. Labels and regenerated IDs are not improvements.
+function actionSignature(actions){
+ return hash(actions.map(({verb,app,target,text,key,scroll,cue,atSeconds})=>({verb,app,target,text,key,scroll,cue,atSeconds})));
+}
+function practicedPath(sessionID){return path.join(root,'scenes',sessionID,'practiced-actions.json')}
+function priorPractice(sessionID){const file=practicedPath(sessionID);return fs.existsSync(file)?read(file):null}
 async function runPractice(p){
  const run=p.runID;publish({phase:'preparingPractice',message:'Resolving saved word cues and restoring the start.'});
  const context=read(p.contextPath),plan=resolvePlan(context);scene.plan=plan;scene.boundRun=run;scene.boundConfigHash=hash(scene.config.actions);
@@ -117,6 +123,7 @@ async function runPractice(p){
  const gate=await restore(run,`${run}-practice`);valid(run);
  await connect();await desktop.view({app:scene.config.startingApp,max:scene.config.maxElements??200});lastReadApp=scene.config.startingApp;
  publish({phase:'practicing',message:'Prepared actions follow the approved audio clock.'});
+ atomic(practicedPath(scene.config.sessionID),{runID:run,signature:actionSignature(scene.config.actions),actions:scene.config.actions});
  const action=execute(run,'practice',plan);action.catch(()=>{});
  try{await appCommand('start',{gate});await action}catch(error){throw error}
  publish({phase:'waitingForApproval',message:'Practice finished. Waiting for the real user’s A/G decision.'});
@@ -179,6 +186,11 @@ async function prepare(config){
  const requestedPractice=p.phase==='practiceRequested'&&sameID(p.approval?.draft?.sessionID,config.sessionID);
  if(g.active && g.remainingChapterScenes && (!requestedPractice || !sameID(g.draft.sessionID,config.sessionID)))throw Error('Wait for the user to select guided practice before preparing screen actions for this chapter.');
  if(p.active&&!['completed','inactive'].includes(p.phase)&&!requestedPractice)throw Error('Finish/end the current guided scene before preparing another');
+ const previous=priorPractice(config.sessionID);
+ if(requestedPractice && previous && !sameID(previous.runID,p.runID)){
+  if(actionSignature(config.actions)===previous.signature)throw Error('G requested improved practice. Revise the screen actions or their timing.');
+  config.baselinePath=path.join(root,'scenes',config.sessionID,'baseline.json');
+ }
  paused();scene={config,dir:path.join(root,'scenes',config.sessionID),complete:false};fs.mkdirSync(scene.dir,{recursive:true,mode:0o700});atomic(path.join(scene.dir,'scene.json'),config);
  publish({phase:'preparing',message:'Warming the action runner and saving the immutable starting checkpoint.',sceneID:config.sceneID,sessionID:config.sessionID});
  await connect();await minimizeCodex();await activate(config.startingApp);const cursor=await desktop.actions.cursor();await desktop.move({x:cursor.x+.5,y:cursor.y+.5});
@@ -198,7 +210,21 @@ async function commands(){
    else if(c.kind==='evidence'){if(!evidence||c.requestID!==evidence.id)throw Error('No matching evidence request');const pending=evidence;evidence=null;pending.resolve(c.manifest);}
    else if(c.kind==='update'){
     const g=guide(),p=practice();const wordReview=sameID(g.draft?.sessionID,scene?.config.sessionID)&&['improving','reading','awaitingDecision','audioGenerating','audioReady'].includes(g.phase);if(job||!scene||(!wordReview&&p.phase!=='practiceRequested')||!sameID(c.scene.sessionID,scene.config.sessionID))throw Error('Actions can only change before a new practice, with no active job');
-    c.scene.actions.forEach(validateAction);scene.config.actions=c.scene.actions;scene.boundRun=null;scene.targets={};publish({phase:'prepared',message:'Updated actions will be practiced before they can be recorded.'});
+    if(!Array.isArray(c.scene.actions)||!c.scene.actions.length)throw Error('Provide at least one improved action.');
+    c.scene.actions.forEach(validateAction);
+    if(c.scene.restoreActions)c.scene.restoreActions.forEach(validateAction);
+    if(new Set(c.scene.actions.map(a=>a.id)).size!==c.scene.actions.length)throw Error('Action IDs must be unique.');
+    if(!wordReview && !sameID(p.approval?.draft?.sessionID,scene.config.sessionID))throw Error('The active practice belongs to another scene.');
+    const previous=priorPractice(scene.config.sessionID);
+    if(p.phase==='practiceRequested' && previous && !sameID(previous.runID,p.runID)){
+     if(!sameID(c.runID,p.runID))throw Error('Use the current practice request run ID.');
+     if(actionSignature(c.scene.actions)===previous.signature)throw Error('Change the demonstrated actions or timing before practicing again.');
+    }
+    scene.config.actions=c.scene.actions;
+    if(c.scene.restoreActions)scene.config.restoreActions=c.scene.restoreActions;
+    scene.boundRun=null;scene.targets={};
+    atomic(path.join(scene.dir,'scene.json'),scene.config);
+    publish({phase:'prepared',reason:null,message:'Updated actions will be practiced before they can be recorded.'});
    }
    else if(c.kind==='resume'){if(job||!scene)throw Error('No stopped scene is ready to resume');if(scene.finishedRecording&&!scene.complete){launch(saveEnding)}else{if(practice().phase==='practiceRequested')scene.boundRun=null;publish({phase:'prepared',message:'Retrying the current gate; approvals are not synthesized.'});}}
    else if(c.kind==='stop'){stopped=true;if(evidence){evidence.reject(Error('CANCELLED: runner stopped'));evidence=null;}try{const p=practice();if(p.active&&['practicing','recording','waitingForActions','waitingForRecordActions'].includes(p.phase))await appCommand('abort')}catch{}}
@@ -238,7 +264,13 @@ try{while(!stopped){
    }
    if(state.phase!=='needsAgent'){
     const p=practice();if(sameID(p.approval?.draft?.sessionID,scene.config.sessionID)){
-     if(p.phase==='practiceRequested'&&!sameID(scene.boundRun,p.runID))launch(()=>runPractice(p));
+     if(p.phase==='practiceRequested'&&!sameID(scene.boundRun,p.runID)){
+      const prior=priorPractice(scene.config.sessionID);
+      if(prior && !sameID(prior.runID,p.runID) && prior.signature===actionSignature(scene.config.actions)){
+       publish({phase:'needsAgent',reason:'practiceImprovement',message:'G requested improved screen actions. Update this practice before running it.'});
+       emit('practiceImprovementRequested',{sessionID:scene.config.sessionID,sceneID:scene.config.sceneID,runID:p.runID});
+      }else launch(()=>runPractice(p));
+     }
      else if(p.phase==='recordRequested')launch(()=>runRecord(p));
     }
    }

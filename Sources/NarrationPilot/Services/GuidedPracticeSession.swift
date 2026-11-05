@@ -253,7 +253,7 @@ final class GuidedPracticeSession: ObservableObject {
         let operation = UUID(); operationID = operation; publish()
         worker = Task { [weak self] in
             guard let self, self.operationID == operation, self.active, !Task.isCancelled else { return }
-            guard await self.prompt("Preparing practice."), self.operationID == operation, self.active else {
+            guard await self.prompt(self.attempt > 1 ? "Preparing improved practice." : "Preparing practice."), self.operationID == operation, self.active else {
                 if self.operationID == operation { self.promptBusy = false; self.block("Spoken practice prompt could not finish. Use redo when idle.") }; return
             }
             self.promptBusy = false
@@ -337,8 +337,8 @@ final class GuidedPracticeSession: ObservableObject {
 
     private func finishIfReady() {
         guard audioFinished, actionsFinished, ["practicing", "waitingForActions"].contains(phase) else { return }
-        phase = "practiceReady"; message = "Practice finished. Approve to restore the start and record; redo to practice again with this same audio."
-        notify("Practice finished. Approve or redo.")
+        phase = "practiceReady"; message = "Practice finished. Approve to restore the start and record; request an improvement to rehearse revised actions with this same audio."
+        notify("Practice finished. Approve or improve.")
     }
 
     private func beginRecording(gate: GuidedPracticeGate?) throws {

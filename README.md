@@ -361,7 +361,7 @@ settings are changed.
 The optional persistent runner removes per-take script construction and most
 agent/tool round trips. Prepare the scene's visible action targets and reversible
 restore recipe before narration is announced (or during its review). One Node /
-AgentCursor process handles later practice requests, G redo and A-to-record,
+AgentCursor process handles later practice requests, G requests for improved practice and A-to-record,
 using the approved WAV clock and resolved word cues. The native SDK stays warm;
 movement pacing is reset to the same seed per attempt. Other speech and A/G
 bindings retain their existing behavior; guided spoken announcements are shorter.
@@ -400,7 +400,7 @@ commands, and the hands-free flow. The existing
 
 In **Guided Narration & Audio Review**, choose **Choose Baserow Chapter**, select the script, chapter and starting scene, pause FocuSee, and click **Start Chapter Review**. The guided picker uses your configured Baserow connection and loads the remaining narration in chapter order. It has its own selection, independent of the macOS reader.
 
-Use **⌘⇧A** to approve wording or **⌘⇧G** to request a revision from the active agent. After the cloned voice preview, **⌘⇧G** regenerates the voice, **⌘⇧A** requests guided practice, and **⌘⇧M** or **⌃⇧M** records your own mouse and keyboard actions with that exact voice. Manual takes skip practice. Once the take finishes and FocuSee confirms pause, the app reads the next scene. The final take announces chapter completion. For guided takes, the app starts the next spoken prompt while the runner saves the ending screen. The next take or practice waits for that checkpoint. An active agent is needed for wording revisions and guided actions.
+Use **⌘⇧A** to approve wording or **⌘⇧G** to request a revision from the active agent. After the cloned voice preview, **⌘⇧G** regenerates the voice, **⌘⇧A** requests guided practice. During practice, **⌘⇧G** asks the agent to improve the screen actions and rehearse again with the approved voice. At voice preview, **⌘⇧M** or **⌃⇧M** records your own mouse and keyboard actions with that exact voice. Manual takes skip practice. Once the take finishes and FocuSee confirms pause, the app reads the next scene. The final take announces chapter completion. For guided takes, the app starts the next spoken prompt while the runner saves the ending screen. The next take or practice waits for that checkpoint. An active agent is needed for wording revisions and guided actions.
 
 ### Approved audio recording
 

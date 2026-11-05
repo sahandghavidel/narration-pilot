@@ -165,6 +165,16 @@ class RunnerCheck(unittest.TestCase):
                         if second_scene and reappear:
                             app.guide['remainingChapterScenes'] = []
                         app.request();launched=True
+                    if state['phase']=='needsAgent' and state.get('reason')=='practiceImprovement':
+                        self.assertEqual(app.practice_finishes, 1)
+                        run_id = state['lastEvent']['runID']
+                        for rejected_id in [uid(), run_id]:
+                            r = subprocess.run(['python3',str(CLI),'--directory',str(worker),'update','--scene-file',str(scene),'--run-id',rejected_id],env=env,capture_output=True)
+                            self.assertNotEqual(r.returncode, 0)
+                        config['actions'][0]['atSeconds'] = .04
+                        scene.write_text(json.dumps(config))
+                        cli('update','--scene-file',str(scene),'--run-id',run_id)
+                        continue
                     if state['phase']=='needsAgent' and state.get('reason')!='narrationImprovement':
                         self.assertTrue(bad,(state,app.errors))
                         self.assertIn('Visual continuity mismatch',state['message'])
