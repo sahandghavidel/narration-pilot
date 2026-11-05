@@ -1,0 +1,6 @@
+interface:
+  display_name: "YouTube Narration Script Builder"
+  short_description: "Narration-only Baserow scripts for guided recording"
+  default_prompt: "Use $youtube-narration-script-builder to save a tutorial outline and chapter narration in Baserow without written On Screen instructions, then use $guided-scene-recording for live screen actions and A/G review."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
