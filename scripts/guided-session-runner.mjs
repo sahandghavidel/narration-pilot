@@ -52,7 +52,18 @@ async function minimizeCodex(){
  if(app?.active){const activated=await desktop.activate(app.name);if(!activated.active||activated.bundleId!=='com.openai.codex')throw Error('Could not select Codex for minimization');await desktop.key('cmd+m');lastReadApp=null;}
 }
 async function observe(){const views={};for(const app of scene.config.observeApps){views[app]=normalize(await desktop.view({app,max:scene.config.maxElements??200}));lastReadApp=app;}return {views,cursor:await desktop.actions.cursor()}}
-function assertSnapshot(current,baseline){if(stable(current)!==stable(baseline))throw Error('Starting screen/cursor differs from the immutable checkpoint.');}
+function comparableSnapshot(snapshot){
+ const copy=structuredClone(snapshot);
+ for(const view of Object.values(copy.views)){
+  if(view.app.bundleId!=='com.google.Chrome')continue;
+  for(const el of view.elements){
+   // Chrome sometimes omits the unchecked value after dismissing Downloads.
+   if(el.role==='checkbox' && el.name==='Downloads - pinned' && el.value==='0')delete el.value;
+  }
+ }
+ return copy;
+}
+function assertSnapshot(current,baseline){if(stable(comparableSnapshot(current))!==stable(comparableSnapshot(baseline)))throw Error('Starting screen/cursor differs from the immutable checkpoint.');}
 function validateAction(a){
  if(a.systemOverlay && (!['move','click','highlight'].includes(a.verb)||![a.target?.x,a.target?.y].every(Number.isFinite)))throw Error('System overlays require a coordinate pointer action.');
  if(a.verb==='highlight' && ![a.target?.x,a.target?.y,a.end?.x,a.end?.y].every(Number.isFinite))throw Error('Highlight requires visible text start and end coordinates.');
