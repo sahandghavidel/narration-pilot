@@ -68,6 +68,7 @@ struct GuidedNarrationSnapshot: Codable {
     var audioDecision: GuidedAudioDecision?
     var audioAcknowledged: Bool?
     var audioBusy: Bool?
+    var remainingChapterScenes: [GuidedNarrationDraft]?
     var practice: [String: String]?
 }
 
@@ -88,6 +89,10 @@ final class GuidedNarrationReview: ObservableObject {
     @Published private(set) var audioDecision: GuidedAudioDecision?
     @Published private(set) var audioAcknowledged = false
     @Published private(set) var audioBusy = false
+    private(set) var remainingChapterScenes: [GuidedNarrationDraft]?
+    var recordManualAudio: ((GuidedAudioDecision) async throws -> Void)?
+    var cancelManualRecording: () -> Void = {}
+    private var manualTask: Task<Void, Never>?
     var onAudioApproved: ((GuidedAudioDecision) -> Void)?
     var onEnd: () -> Void = {}
     var onInterrupt: () -> Void = {}
@@ -127,6 +132,7 @@ final class GuidedNarrationReview: ObservableObject {
             if let data = try? Data(contentsOf: directory.appendingPathComponent("status.json")),
                let saved = try? Self.decoder().decode(GuidedNarrationSnapshot.self, from: data), saved.schemaVersion == 1 {
                 draft = saved.draft; active = saved.active
+                remainingChapterScenes = saved.remainingChapterScenes
                 audioReview = saved.audioReview
                 if let draft, active {
                     decision = try? Self.decoder().decode(GuidedNarrationDecision.self, from: Data(contentsOf: eventURL(draft)))
@@ -138,7 +144,11 @@ final class GuidedNarrationReview: ObservableObject {
                            let event = try? Self.decoder().decode(GuidedAudioDecision.self, from: data), event.draft == draft, event.schemaVersion == 1, event.kind == "approveAudio", event.audio.versionID != nil {
                             audioDecision = event; audioReview = event.audio
                             audioAcknowledged = FileManager.default.fileExists(atPath: acknowledgmentURL(event.id).path)
-                            phase = "audioApproved"; message = "Approved audio restored. No generation or playback starts automatically."
+                            if saved.phase.hasPrefix("manual") {
+                                phase = "manualRetry"; message = "Manual take interrupted. Check FocuSee and press M to record this scene again."
+                            } else {
+                                phase = "audioApproved"; message = "Approved audio restored. No generation or playback starts automatically."
+                            }
                         } else if audioReview != nil {
                             phase = "audioSuspended"; message = "Audio review restored. Replay the saved candidate, or use redo to generate another version."
                         }
@@ -196,6 +206,10 @@ final class GuidedNarrationReview: ObservableObject {
     }
 
     func interruptSpeech() {
+        if manualTask != nil {
+            cancelManualTake()
+            phase = "manualRetry"; message = "Manual recording interrupted. Press M when ready to retry."
+        }
         onInterrupt()
         generation = UUID(); checkingSpeech = false
         let wasAudioReview = audioReview != nil && audioDecision == nil
@@ -211,12 +225,14 @@ final class GuidedNarrationReview: ObservableObject {
     /// Guided mode owns A/G in every stage; busy/repeated presses never fall
     /// through to standalone audio actions or approve a later stage.
     @discardableResult func approve() -> Bool {
+        if active, phase.hasPrefix("manual") { return true }
         if active, practiceApprove() { return true }
         if active, phase == "audioReady", !audioBusy { approveCurrentAudio() }
         else { choose("approveNarration") }
         return active
     }
     @discardableResult func improve() -> Bool {
+        if active, phase.hasPrefix("manual") { return true }
         if active, practiceRedo() { return true }
         if active, ["approved", "audioReady", "audioFailed", "audioSuspended"].contains(phase), !audioBusy { generateAudio(forceNewVersion: true) }
         else { choose("improveNarration") }
@@ -292,6 +308,8 @@ final class GuidedNarrationReview: ObservableObject {
     }
 
     func end() {
+        cancelManualTake()
+        remainingChapterScenes = nil
         onEnd()
         generation = UUID(); checkingSpeech = false
         cancelAudio(); stopOwnedSpeech()
@@ -372,7 +390,69 @@ final class GuidedNarrationReview: ObservableObject {
         guard finished, isCurrent() else { throw error("Spoken status prompt did not finish.") }
     }
 
-    private func approveCurrentAudio() {
+    func beginChapter(_ scenes: [GuidedNarrationDraft]) async throws {
+        guard !active, let first = scenes.first,
+              scenes.allSatisfy({ !$0.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.narration.count <= 12000 }) else {
+            throw error("Select a chapter with narration in every remaining scene and end any active review.")
+        }
+        remainingChapterScenes = Array(scenes.dropFirst())
+        try await readChapterScene(first)
+    }
+
+    private func readChapterScene(_ next: GuidedNarrationDraft) async throws {
+        try await handle(GuidedNarrationCommand(id: UUID(), sessionID: next.sessionID, kind: "submit", draft: next))
+    }
+
+    private func finishTake() async throws {
+        let remaining = remainingChapterScenes
+        end()
+        if let remaining, let next = remaining.first {
+            remainingChapterScenes = Array(remaining.dropFirst())
+            try await readChapterScene(next)
+        } else if remaining != nil {
+            message = "Recording completed for this chapter."
+            publish()
+            let token = UUID()
+            speechToken = token
+            speak(message, token)
+        }
+    }
+
+    private func cancelManualTake() {
+        guard let task = manualTask else { return }
+        manualTask = nil
+        task.cancel()
+        cancelManualRecording()
+    }
+
+    func recordMyself() {
+        guard active, !audioBusy, manualTask == nil, recordManualAudio != nil else { return }
+        if phase == "manualRetry", let audioDecision { startManualTake(audioDecision) }
+        else if phase == "audioReady" { approveCurrentAudio(manual: true) }
+    }
+
+    private func startManualTake(_ approval: GuidedAudioDecision) {
+        guard let recordManualAudio else { return }
+        phase = "manualRecording"; message = "Recording your screen actions with the approved voice."
+        publish()
+        manualTask = Task {
+            do {
+                try Task.checkCancellation()
+                try await recordManualAudio(approval)
+                try Task.checkCancellation()
+                guard active, audioDecision?.id == approval.id else { return }
+                manualTask = nil
+                try await finishTake()
+            } catch {
+                guard !Task.isCancelled, active, audioDecision?.id == approval.id else { return }
+                manualTask = nil
+                phase = "manualRetry"; message = "Manual take did not finish: \(error.localizedDescription) Press M to retry."
+                publish()
+            }
+        }
+    }
+
+    private func approveCurrentAudio(manual: Bool = false) {
         guard let draft, let audio = audioReview, let id = audio.versionID else { return }
         do {
             try approveAudioVersion(id, draft.narration, audio.voice.id)
@@ -389,6 +469,7 @@ final class GuidedNarrationReview: ObservableObject {
             stopAudioPreview(id)
             phase = "audioApproved"; message = "Exact cloned audio approved. Word timings are saved in the background; recording is not started."
             publish()
+            if manual { startManualTake(event); return }
             if let onAudioApproved { onAudioApproved(event); return }
             let epoch = generation
             Task { [weak self] in
@@ -472,6 +553,10 @@ final class GuidedNarrationReview: ObservableObject {
         case "generateAudio":
             guard active, draft?.sessionID == command.sessionID, decision?.kind == "approveNarration", prepareAudio != nil else { throw error("Approve wording before generating cloned audio.") }
             generateAudio()
+        case "chapterTakeCompleted":
+            guard active, remainingChapterScenes != nil, draft?.sessionID == command.sessionID,
+                  practiceSummary()?["phase"] == "completed" else { throw error("Chapter take is not complete.") }
+            try await finishTake()
         case "end":
             guard draft?.sessionID == command.sessionID else { throw error("Session does not match the current review.") }
             end()
@@ -503,7 +588,7 @@ final class GuidedNarrationReview: ObservableObject {
     }
     private func publish() {
         do {
-            try write(GuidedNarrationSnapshot(appRunning: running, pid: ProcessInfo.processInfo.processIdentifier, updatedAt: Date(), active: active, phase: phase, message: message, draft: draft, decision: decision, acknowledged: acknowledged, speechActive: speechToken != nil, audioReview: audioReview, audioDecision: audioDecision, audioAcknowledged: audioAcknowledged, audioBusy: audioBusy, practice: practiceSummary()), to: directory.appendingPathComponent("status.json"))
+            try write(GuidedNarrationSnapshot(appRunning: running, pid: ProcessInfo.processInfo.processIdentifier, updatedAt: Date(), active: active, phase: phase, message: message, draft: draft, decision: decision, acknowledged: acknowledged, speechActive: speechToken != nil, audioReview: audioReview, audioDecision: audioDecision, audioAcknowledged: audioAcknowledged, audioBusy: audioBusy, remainingChapterScenes: remainingChapterScenes, practice: practiceSummary()), to: directory.appendingPathComponent("status.json"))
         } catch { message = "Could not save narration review status: \(error.localizedDescription)" }
     }
     private func error(_ text: String) -> NSError { NSError(domain: "GuidedNarrationReview", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }

@@ -3339,7 +3339,56 @@ final class AppModel: ObservableObject {
         } catch { approvedAudioRecording.report(error.localizedDescription) }
     }
 
+    func loadGuidedBaserowChoices() async throws -> ([BaserowScriptRecord], [BaserowSceneRecord]) {
+        let scripts = try await baserowSceneService.fetchScripts(baseURL: baserowBaseURL, token: baserowToken, tableID: baserowScriptsTableID)
+        let rows = try await baserowSceneService.fetchScenes(baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID)
+        return (scripts, rows)
+    }
+
+    func startBaserowReview(script: Int, part: String, startRow: Int) async throws {
+        let rows = try await baserowSceneService.fetchScenes(baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID)
+            .filter { $0.scriptIDs.contains(script) && $0.part == part }
+        guard let index = rows.firstIndex(where: { $0.rowID == startRow }) else {
+            throw BaserowSceneError.invalidScenes("The selected Baserow scene changed. Reload the scene list.")
+        }
+        guard Set(rows.map(\.originalSceneNumber)).count == rows.count else {
+            throw BaserowSceneError.invalidScenes("This chapter contains duplicate scene numbers. Check the order in Baserow.")
+        }
+        guard await clonedFocuSeeControl.sample() == .paused else {
+            throw BaserowSceneError.invalidScenes("Pause the active FocuSee recording before starting the chapter.")
+        }
+        try await guidedNarrationReview.beginChapter(rows[index...].map {
+            GuidedNarrationDraft(sessionID: UUID(), sceneID: $0.scene.id, revision: 1, narration: $0.scene.narration)
+        })
+    }
+
     private func configureGuidedNarrationReview() {
+        guidedNarrationReview.recordManualAudio = { [weak self] approval in
+            guard let self else { throw CancellationError() }
+            let prepared = try self.clonedClipboardAudio.approvedAudio(narration: approval.draft.narration, voiceID: approval.audio.voice.id)
+            guard prepared.take.id == approval.audio.versionID else {
+                throw BaserowSceneError.invalidScenes("The approved voice take changed.")
+            }
+            guard await self.clonedFocuSeeControl.sample() == .paused else {
+                throw BaserowSceneError.invalidScenes("Pause FocuSee before recording this scene.")
+            }
+            try Task.checkCancellation()
+            guard let task = self.approvedAudioRecording.start(audio: prepared.audio, takeID: prepared.take.id, requiresResumeAndPause: true) else {
+                throw BaserowSceneError.invalidScenes(self.approvedAudioRecording.message)
+            }
+            await task.value
+            try Task.checkCancellation()
+            guard self.approvedAudioRecording.phase == "completed" else {
+                throw BaserowSceneError.invalidScenes(self.approvedAudioRecording.message)
+            }
+            for _ in 0..<15 {
+                if await self.clonedFocuSeeControl.sample() == .paused { return }
+                try await Task.sleep(for: .milliseconds(150))
+            }
+            throw BaserowSceneError.invalidScenes("FocuSee did not confirm pause after playback.")
+        }
+        guidedNarrationReview.cancelManualRecording = { [weak self] in self?.approvedAudioRecording.cancel() }
+
         guidedNarrationReview.canSpeak = { [weak self] in
             guard let self else { return "Narration Pilot is unavailable." }
             guard self.speechState == .idle, self.pendingReadTask == nil, self.activeReadSequenceID == nil,
@@ -3842,9 +3891,16 @@ final class AppModel: ObservableObject {
     }
 
     private func registerShortcutHandlers() {
+        KeyboardShortcuts.onKeyUp(for: .recordGuidedManually) { [weak self] in
+            Task { @MainActor in self?.guidedNarrationReview.recordMyself() }
+        }
         KeyboardShortcuts.onKeyUp(for: .recordApprovedClipboardAudio) { [weak self] in
             Task { @MainActor in self?.recordApprovedClipboardAudio() }
         }
+        guidedNarrationReview.$phase.sink { phase in
+            if ["audioReady", "manualRetry"].contains(phase) { KeyboardShortcuts.enable(.recordGuidedManually) }
+            else { KeyboardShortcuts.disable(.recordGuidedManually) }
+        }.store(in: &cancellables)
         KeyboardShortcuts.onKeyUp(for: .generateClonedClipboardAudio) { [weak self] in
             Task { @MainActor in
                 guard let self, !self.guidedNarrationReview.active else { return }

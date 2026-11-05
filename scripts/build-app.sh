@@ -15,8 +15,12 @@ esac
 
 cd "$REPO_ROOT"
 
-swift build -c "$CONFIGURATION"
-BINARY_DIR="$(swift build -c "$CONFIGURATION" --show-bin-path)"
+build_args=(-c "$CONFIGURATION")
+if [[ -n "${NARRATION_PILOT_BUILD_SDK:-}" ]]; then
+    build_args+=(--build-system native --sdk "$NARRATION_PILOT_BUILD_SDK")
+fi
+swift build "${build_args[@]}"
+BINARY_DIR="$(swift build "${build_args[@]}" --show-bin-path)"
 APP_PATH=".build/app/$CONFIGURATION/Narration Pilot.app"
 CONTENTS_PATH="$APP_PATH/Contents"
 

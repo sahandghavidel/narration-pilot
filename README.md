@@ -396,6 +396,12 @@ It documents the scene schema, word aliases/lead times, evidence requests, repai
 commands, and the hands-free flow. The existing
 `record-narration-pilot-tutorial` skill is deliberately unchanged.
 
+### Record a Baserow chapter with A, G and M
+
+In **Guided Narration & Audio Review**, choose **Choose Baserow Chapter**, select the script, chapter and starting scene, pause FocuSee, and click **Start Chapter Review**. The guided picker uses your configured Baserow connection and loads the remaining narration in chapter order. It has its own selection, independent of the macOS reader.
+
+Use **⌘⇧A** to approve wording or **⌘⇧G** to request a revision from the active agent. After the cloned voice preview, **⌘⇧G** regenerates the voice, **⌘⇧A** requests guided practice, and **⌘⇧M** records your own mouse and keyboard actions with that exact voice. Manual takes skip practice. Once the take finishes and FocuSee confirms pause, the app reads the next scene. The final take announces chapter completion. Guided takes advance after the runner saves the ending checkpoint. An active agent is needed for wording revisions and guided actions.
+
 ### Approved audio recording
 
 Under **Approved Audio Recording**, assign the separate **Shortcut** recorder or

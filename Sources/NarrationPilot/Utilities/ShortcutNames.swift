@@ -1,6 +1,9 @@
 @preconcurrency import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
+    static let recordGuidedManually = Self("recordGuidedManually",
+        default: KeyboardShortcuts.Shortcut(.m, modifiers: [.command, .shift]))
+
     static let recordApprovedClipboardAudio = Self("recordApprovedClipboardAudio")
 
     static let approveClonedClipboardAudio = Self(

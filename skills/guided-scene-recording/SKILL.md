@@ -20,6 +20,12 @@ Narration Pilot announces the active stage. Read actual saved bindings; Sahand c
 
 Do not ask for a typed duplicate of an approval already saved by the app. Use spoken app prompts and stage events. Talk in chat only for a decision not expressible with those controls, a meaningful blocker, or a compact result.
 
+## Chapters started in the app
+
+When guided status includes `remainingChapterScenes` (including an empty array), the app owns scene selection. Use the active draft and session ID. Do not submit a new first draft, end the review between scenes, or announce chapter completion yourself. The app loads the selected Baserow rows independently of the macOS reader. G during wording review still requires the matching agent revision.
+
+At the cloned-voice preview, M approves the voice for a manual take. Leave the screen and cursor to Sahand. The app records and advances after confirmed pause. Wait for A to request guided practice before preparing a desktop plan or touching the screen in this mode. Use the last guided ending checkpoint if it immediately preceded this scene. After a manual take, establish the new checkpoint from the actual screen left by Sahand. After a guided take the runner notifies the app once it has saved the ending checkpoint. With no active agent, manual chapter recording still runs; wording revisions and guided practice wait for assistance.
+
 ## Prepare before the user waits
 
 Read [references/runner.md](references/runner.md) for the scene format, commands, and evidence bridge. The app repository is `/Users/sahand/Desktop/projects-test/narration-pilot`; the skill’s `scripts/session.py` wraps its runner helper. An explicit `NARRATION_PILOT_REPO` can override that path.

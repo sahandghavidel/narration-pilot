@@ -124,6 +124,34 @@ struct GuidedAudioReviewCheck {
         try await Task.sleep(for: .milliseconds(50))
         precondition(!review.active && !review.audioBusy && previews.count == beforeLate)
         precondition(!FileManager.default.fileExists(atPath: root.appendingPathComponent("audio-events/\(cancelled.sessionID.uuidString.lowercased())-r1.json").path))
+        // A chapter owns its own cursor. A failed manual take and duplicate M cannot skip a row.
+        let chapter = ["First scene.", "Second scene."].enumerated().map {
+            GuidedNarrationDraft(sessionID: UUID(), sceneID: "baserow-row-\($0.offset)", revision: 1, narration: $0.element)
+        }
+        review.prepareAudio = { _, _, _, _ in GuidedPreparedAudio(versionID: firstAudio, duration: 1) }
+        var manualCalls = 0
+        review.onAudioApproved = { _ in preconditionFailure("M started agent practice") }
+        review.recordManualAudio = { approval in
+            manualCalls += 1
+            precondition(approval.audio.versionID == firstAudio)
+            if manualCalls == 1 { throw NSError(domain: "PauseCheck", code: 1) }
+        }
+        try await review.beginChapter(chapter)
+        review.improve()
+        var revised = chapter[0]; revised.narration = "Revised first scene."; revised.revision = 2
+        try await send("submit", draft: revised, eventID: review.decision!.id)
+        review.approve()
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        review.recordMyself(); review.recordMyself()
+        try await waitFor { review.phase == "manualRetry" }
+        precondition(manualCalls == 1 && review.draft == revised)
+        review.recordMyself()
+        try await waitFor { review.phase == "awaitingDecision" && review.draft == chapter[1] }
+        review.approve()
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        review.recordMyself()
+        try await waitFor { !review.active }
+        precondition(manualCalls == 3 && review.message == "Recording completed for this chapter.")
         // Backward-compatible decoding when earlier snapshots have no audio fields.
         var old = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("status.json"))) as! [String: Any]
         for key in ["audioReview", "audioDecision", "audioAcknowledged", "audioBusy"] { old.removeValue(forKey: key) }

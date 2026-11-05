@@ -138,7 +138,7 @@ final class ApprovedAudioRecordingSession: ObservableObject {
     }
 
     @discardableResult
-    func start(audio: Data, takeID: UUID) -> Task<Void, Never>? {
+    func start(audio: Data, takeID: UUID, requiresResumeAndPause: Bool = false) -> Task<Void, Never>? {
         guard !isBusy else { return nil }
         guard speechIsIdle() else { report("Wait for macOS speech and recording actions to finish first."); return nil }
         let prepared: any ApprovedAudioPlaying
@@ -156,6 +156,10 @@ final class ApprovedAudioRecordingSession: ObservableObject {
             configuration.after = .ensurePaused
             configuration.delayBefore = 0
             configuration.delayAfter = 0
+        }
+        if requiresResumeAndPause {
+            configuration.before = .ensureRecording
+            configuration.after = .ensurePaused
         }
         let configurationSnapshot = configuration
         activeFastMode = configuration.fastMode

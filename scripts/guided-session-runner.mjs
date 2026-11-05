@@ -21,6 +21,7 @@ const hash=v=>createHash('sha256').update(stable(v)).digest('hex');
 const sameID=(a,b)=>String(a??'').toLowerCase()===String(b??'').toLowerCase();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const utc=()=>new Date().toISOString().replace(/\.\d{3}Z$/,'Z');
+let lastChapterRequest=null;
 let stopped=false,job=null,scene=null,desktop=null,evidence=null,sequence=0,lastReadApp=null,nativeCapture=flags.visual!=='supplied';
 let state={schemaVersion:1,pid:process.pid,running:true,phase:'idle',message:'Runner ready for a prepared scene.',sequence};
 function publish(patch={}){state={...state,...patch,updatedAt:new Date().toISOString()};atomic(path.join(root,'status.json'),state)}
@@ -135,11 +136,19 @@ async function runRecord(p){
  const shots=await images(`${run}-ending`);assertSnapshot(await observe(),ending);
  const file=path.join(scene.dir,'ending-checkpoint.json');atomic(file,{checkpointID:randomUUID(),snapshot:ending,cursor:ending.cursor,images:shots,operationalOnly:true,footageNeedsReview:true,recordingResult:valid(run).recordingResult});
  scene.complete=true;publish({phase:'sceneComplete',message:'Scene recorded; saved footage still needs normal review.',endingCheckpoint:file});emit('sceneComplete',{sessionID:scene.config.sessionID,endingCheckpoint:file});
+ const review=guide();
+ if(review.remainingChapterScenes && sameID(review.draft?.sessionID,scene.config.sessionID)){
+  const id=randomUUID();
+  atomic(path.join(appRoot,'GuidedNarrationReview/commands',id+'.json'),{schemaVersion:1,id,createdAt:utc(),sessionID:scene.config.sessionID,kind:'chapterTakeCompleted'});
+ }
 }
 async function prepare(config){
  if(job)throw Error('Runner is busy');if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(config.sessionID??''))throw Error('Scene sessionID must be a UUID');if(!config.sessionID||!config.startingApp||!config.observeApps?.includes(config.startingApp)||!config.actions?.length)throw Error('Scene needs sessionID, startingApp, observeApps and actions');
  [...config.actions,...(config.restoreActions??[])].forEach(validateAction);if(new Set(config.actions.map(a=>a.id)).size!==config.actions.length)throw Error('Action IDs must be unique');
- const p=practice();if(p.active&&!['completed','inactive'].includes(p.phase))throw Error('Finish/end the current guided scene before preparing another');
+ const p=practice(),g=guide();
+ const requestedPractice=p.phase==='practiceRequested'&&sameID(p.approval?.draft?.sessionID,config.sessionID);
+ if(g.active && g.remainingChapterScenes && (!requestedPractice || !sameID(g.draft.sessionID,config.sessionID)))throw Error('Wait for the user to select guided practice before preparing screen actions for this chapter.');
+ if(p.active&&!['completed','inactive'].includes(p.phase)&&!requestedPractice)throw Error('Finish/end the current guided scene before preparing another');
  paused();scene={config,dir:path.join(root,'scenes',config.sessionID),complete:false};fs.mkdirSync(scene.dir,{recursive:true,mode:0o700});atomic(path.join(scene.dir,'scene.json'),config);
  publish({phase:'preparing',message:'Warming the action runner and saving the immutable starting checkpoint.',sceneID:config.sceneID,sessionID:config.sessionID});
  await connect();await minimizeCodex();await activate(config.startingApp);const cursor=await desktop.actions.cursor();await desktop.move({x:cursor.x+.5,y:cursor.y+.5});
@@ -170,6 +179,24 @@ async function commands(){
 publish();
 try{while(!stopped){
  await commands();
+ if(!job && (!scene || scene.complete || state.phase==='prepared' || state.phase==='needsAgent')){
+  // A chapter started in the app can request help before any runner plan exists.
+  try {
+   const g=guide();
+   if(g.active && g.remainingChapterScenes && !sameID(g.draft.sessionID,scene?.config.sessionID)){
+    const wording=g.phase==='improving';
+    const practiceNeeded=g.practice?.phase==='practiceRequested';
+    if(wording || practiceNeeded){
+     const key=wording?g.decision.id:g.practice.runID;
+     if(key!==lastChapterRequest){
+      lastChapterRequest=key;
+      publish({phase:'needsAgent',message:wording?'Chapter wording revision requested.':'Prepare guided actions for the selected chapter scene.'});
+      emit(wording?'narrationImprovementRequested':'needsAgent',{sessionID:g.draft.sessionID,sceneID:g.draft.sceneID,event:g.decision});
+     }
+    }
+   }
+  }catch(error){if(error.code!=='ENOENT' && state.phase!=='needsAgent')attention(error.message)}
+ }
  if(!job&&scene?.baseline&&!scene.complete){
   try{
    const g=guide();
