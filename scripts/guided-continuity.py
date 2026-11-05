@@ -28,7 +28,18 @@ def compare(baseline, current, masks=None):
             box = (round(x*a.width), round(y*a.height), round((x+w)*a.width)-1, round((y+h)*a.height)-1)
             ImageDraw.Draw(a).rectangle(box, fill=(0, 0, 0))
             ImageDraw.Draw(b).rectangle(box, fill=(0, 0, 0))
-        bounds = ImageChops.difference(a, b).getbbox()
+        delta = ImageChops.difference(a, b)
+        # macOS rounded window corners include the composited background. JPEG
+        # blocks there can differ slightly even with identical window content.
+        # Permit only low-amplitude changes confined to those four corners.
+        corner = min(64, a.width // 10, a.height // 10)
+        content = delta.copy()
+        for x, y in [(0, 0), (a.width-corner, 0), (0, a.height-corner), (a.width-corner, a.height-corner)]:
+            ImageDraw.Draw(content).rectangle((x, y, x+corner-1, y+corner-1), fill=(0, 0, 0))
+        if app == 'Google Chrome' and content.getbbox() is None and max(channel[1] for channel in delta.getextrema()) <= 32:
+            bounds = None
+        else:
+            bounds = delta.getbbox()
         details[app] = bounds
     return dict(matched=all(v is None for v in details.values()), differences=details)
 
