@@ -115,7 +115,19 @@ function actionSignature(actions){
  return hash(actions.map(({verb,app,target,text,key,scroll,cue,atSeconds})=>({verb,app,target,text,key,scroll,cue,atSeconds})));
 }
 function practicedPath(sessionID){return path.join(root,'scenes',sessionID,'practiced-actions.json')}
-function priorPractice(sessionID){const file=practicedPath(sessionID);return fs.existsSync(file)?read(file):null}
+function priorPractice(sessionID){
+ const file=practicedPath(sessionID);
+ if(fs.existsSync(file))return read(file);
+ // Recover a practice completed before the improvement gate was installed.
+ const dir=path.dirname(file),config=path.join(dir,'scene.json');
+ if(!fs.existsSync(config))return null;
+ const attempts=fs.readdirSync(dir).filter(n=>n.endsWith('-practice-actions.json'))
+  .sort((a,b)=>fs.statSync(path.join(dir,b)).mtimeMs-fs.statSync(path.join(dir,a)).mtimeMs);
+ if(!attempts.length)return null;
+ const actions=read(config).actions,runID=attempts[0].split('-practice-actions.json')[0];
+ const prior={runID,signature:actionSignature(actions),actions};
+ atomic(file,prior);return prior;
+}
 async function runPractice(p){
  const run=p.runID;publish({phase:'preparingPractice',message:'Resolving saved word cues and restoring the start.'});
  const context=read(p.contextPath),plan=resolvePlan(context);scene.plan=plan;scene.boundRun=run;scene.boundConfigHash=hash(scene.config.actions);
