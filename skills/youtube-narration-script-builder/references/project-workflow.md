@@ -1,19 +1,29 @@
-# Narration record during guided recording
+# Complete chapter narration, then guided recording
 
-Adapted from the separate YouTube Tutorial Script Builder workflow. The permanent deliverable is a concise outline plus approved narration accumulated during recording. Do not create local script drafts, chapter folders, or copies unless Sahand requests an export. Guided runner recipes, checkpoints, and session-to-Baserow-row metadata are runtime evidence, not script exports.
+Adapted from the separate YouTube Tutorial Script Builder. Baserow holds the complete outline and every narration row for the requested chapter before recording begins. On Screen remains empty; no written visual script is required.
 
-## Outline and chapter progression
+## Create the requested chapter
 
-Create or reuse one complete video script. Keep the outline short: Introduction (written last), Chapter 1 through up to Chapter 5, with the conclusion inside the final chapter. Use fewer chapters for a small topic. State each chapter's goal in one or two lines; avoid writing a whole chapter's narration up front.
+Create or reuse one complete video script. Keep its outline concise: Introduction (written last), Chapter 1 through up to Chapter 5, with the conclusion in the final chapter. Use fewer chapters for a small topic. Write all narration scenes for the requested chapter only, unless Sahand asks for several chapters.
 
-When recording, start from Chapter 1’s first existing Baserow narration and work through its linked rows in Scene Number order using actual A/G decisions. Creating new scenes is a separate, explicitly requested writing task. Read the next existing row ahead during the current scene’s audio preparation/review so narration is ready immediately when recording pauses. A chapter can begin with a goal and, where useful, a foundation explanation. Avoid required recaps or unnecessary navigation confirmation scenes. Do not say “chapter” in spoken narration unless requested.
+A request to create a new tutorial and start Chapter 1 means write the complete Chapter 1 narration, not one opening scene. Scene-by-scene applies to recording, not to the amount of narration prepared. A chapter can begin with a short goal and a useful foundation explanation, then progress through its full topic to its final useful outcome. Avoid recaps, obvious navigation confirmations, and unnecessary filler. Do not say “chapter” in spoken narration unless requested.
 
-When introducing a website, prefer visibly searching Google and choosing its verified official result. Treat that as part of the demonstration, not an unseen setup, unless the user asks for another approach. Research is allowed beforehand; do not perform an intended visible transition only during rehearsal.
+Read existing scenes and preserve accepted work. For an incomplete chapter, identify the missing coverage and complete it without duplicating existing scenes or silently overwriting user edits. Inspect earlier chapters to avoid assuming nonexistent files, setup, or screen state.
 
-## Continuity and approvals
+Validate the complete proposed chapter before the first scene write. Save all scenes linked to the intended script, with the correct Part and continuous Scene Number across the complete script. Re-fetch and compare every saved row against the validated chapter. Keep expected row IDs/count and final row ID in private recording metadata so a truncated or partially written chapter cannot be mistaken for a finished chapter. Do not add schema fields or overload Annotation for that metadata.
 
-After each approved recording, carry its actual ending screen/cursor into the next scene. At a chapter handoff, read the outline and linked narration to avoid repeating completed work or assuming a missing screen/code state. The next stored narration must be possible from the actual ending state. Do not rewrite it to fit an unexpected screen; resolve the screen mismatch or follow an explicit revision request. Do not save a separate written visual plan.
+Do not start recording before preparation is complete, or merely because script creation was requested. If both creation and recording are requested, finish and verify the whole chapter first, then start the existing A/G workflow without another routine chat approval.
 
-Wording approval saves that scene's exact narration while audio prepares. Audio approval accepts a version; practice approval accepts a demonstrated plan. These do not imply chapter approval. Chapter approval accepts its linked scene collection and authorizes continuing the outline. Preserve accepted narration and existing user edits unless a revision is requested.
+When introducing a website, prefer visibly searching Google and choosing its verified official result unless the user requests another approach. Research beforehand is allowed; screen demonstrations must still happen in the actual recording.
 
-Use concise spoken language, “I” for Sahand's actions and “we” for shared explanations. Keep one narration focus at a time and explain only what the current screen can support. Use the existing result narration only when the actual screen supports it. Do not invent the next narration from the result. After a successful take and observed pause, speak the next prefetched row immediately. At the verified final scene of the chapter, announce “Recording completed for this chapter.” No routine chat confirmation is required.
+## Record the prepared chapter
+
+Read existing narration in Scene Number order. Prefetch the next row during current audio preparation/review. After a successful take and observed pause, immediately speak that next stored narration. Improvise and practice screen actions without writing On Screen instructions. Use the actual ending state for continuity.
+
+G improves the current narration; A approves its exact wording, which is saved to the same row while audio prepares. Audio approval accepts a take; practice approval accepts a demonstrated plan. None of these makes every other chapter scene approved. Preserve existing user edits when saving revisions.
+
+A result scene is a planned line and must match the actual operation’s outcome before recording. If the screen differs, resolve the mismatch or request a needed revision rather than inventing success or silently rewriting the next scene.
+
+After the expected final scene and earlier chapter scenes are recorded, announce “Recording completed for this chapter.” This needs no routine chat-review approval and is distinct from editorial approval. Do not invent a next scene or silently cross into another chapter. Continue the outline when the user authorizes the next chapter.
+
+Use concise spoken language: “I” for Sahand’s actions and “we” for shared explanations. Keep meaningful actions and results in separate scenes. No local script drafts, chapter workspaces, or exports unless requested; guided runner recipes and recording metadata are permitted runtime artifacts.
