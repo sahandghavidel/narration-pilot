@@ -6,7 +6,34 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw
 
 
-def compare(baseline, current, masks=None):
+def caret_blink(delta, view):
+    """The runner separately checks that AX content, focus and geometry match."""
+    window = view.get('window', {})
+    if not window.get('w') or not window.get('h'):
+        return False
+    sx, sy = delta.width / window['w'], delta.height / window['h']
+    box = delta.getbbox()
+    if not box or box[2]-box[0] > 18 or box[3]-box[1] > 60*sy:
+        return False
+    # Ignore JPEG ringing solely to identify the shape of this one difference.
+    ink = delta.crop(box).convert('L').point(lambda v: 255 if v > 64 else 0)
+    line = ink.getbbox()
+    if not line:
+        return False
+    w, h = line[2]-line[0], line[3]-line[1]
+    if w > max(2, 2*sx) or not 8*sy <= h <= 50*sy or ink.histogram()[255] < .9*w*h:
+        return False
+    x = window['x'] + (box[0]+line[0])/sx
+    y = window['y'] + (box[1]+line[1])/sy
+    for field in view.get('elements', []):
+        if field.get('focused') and field['role'] in ('combobox', 'textfield', 'textarea'):
+            r = field['rect']
+            if r['x']-1 <= x and x+w/sx <= r['x']+r['width']+1 and r['y']-1 <= y and y+h/sy <= r['y']+r['height']+1:
+                return True
+    return False
+
+
+def compare(baseline, current, masks=None, views=None):
     if set(baseline) != set(current):
         return dict(matched=False, reason='Observed app windows differ')
     details = {}
@@ -38,6 +65,8 @@ def compare(baseline, current, masks=None):
             ImageDraw.Draw(content).rectangle((x, y, x+corner-1, y+corner-1), fill=(0, 0, 0))
         if app == 'Google Chrome' and content.getbbox() is None and max(channel[1] for channel in delta.getextrema()) <= 32:
             bounds = None
+        elif app == 'Google Chrome' and caret_blink(delta, (views or {}).get(app, {})):
+            bounds = None
         else:
             bounds = delta.getbbox()
         details[app] = bounds
@@ -50,7 +79,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
     try:
         values = json.loads(args.manifest.read_text())
-        print(json.dumps(compare(values['baseline'], values['current'], values.get('masks'))))
+        checkpoint = args.manifest.with_name('baseline.json')
+        saved = json.loads(checkpoint.read_text()) if checkpoint.exists() else {}
+        views = saved.get('snapshot', {}).get('views') if saved.get('images') == values['baseline'] else None
+        print(json.dumps(compare(values['baseline'], values['current'], values.get('masks'), views)))
     except (OSError, ValueError, KeyError) as error:
         print(json.dumps(dict(matched=False, reason=str(error))))
         raise SystemExit(1)
