@@ -143,6 +143,7 @@ final class GuidedPracticeSession: ObservableObject {
     var canPractice: @MainActor () async -> String? = { "Practice is not connected." }
     var prompt: @MainActor (String) async -> Bool = { _ in true }
     var recordAudio: @MainActor (GuidedPracticeAssets) async throws -> GuidedPracticeRecordingResult = { _ in throw CancellationError() }
+    var chapterCompletion: (GuidedAudioDecision) -> Bool = { _ in false }
     var stopPrompt: () -> Void = {}
     var cancelRecording: (Bool) -> Void = { _ in }
     var recordingProgress: () -> (elapsed: Double, duration: Double, clock: String, sessionID: UUID?) = { (0, 0, "notRecording", nil) }
@@ -363,11 +364,13 @@ final class GuidedPracticeSession: ObservableObject {
     }
 
     private func completeRecordingIfReady() {
-        guard recordActionsFinished, let recordingResult else { return }
+        guard phase != "completed", recordActionsFinished, let recordingResult else { return }
         do {
             phase = "completed"; message = recordingResult.message
             try emit("recordingCompleted")
-            publish(); notify("Scene recording finished.")
+            publish()
+            if let approval, chapterCompletion(approval) { return }
+            notify("Scene recording finished.")
         } catch { block(error.localizedDescription) }
     }
 

@@ -65,7 +65,8 @@ class App:
                     if receipt.exists(): continue
                     cmd = json.loads(path.read_text())
                     assert cmd['kind'] == 'chapterTakeCompleted' and cmd['sessionID'] == self.sid
-                    assert self.state['phase'] == 'completed' and self.capture == 'paused'
+                    assert self.state['recordingResult'] and self.capture == 'paused'
+                    assert self.guide['phase'] == 'reading' and self.guide['pendingEndingSessionID'] == self.sid
                     self.chapter_handoffs += 1
                     write(receipt, dict(accepted=True))
                 for path in (base/'commands').glob('*.json'):
@@ -105,6 +106,8 @@ class App:
                             self.capture='paused'
                             if 'remainingChapterScenes' in self.guide:
                                 # Navigation finishes after the runner observed the last action.
+                                self.guide = dict(active=True, phase='reading', draft=dict(sessionID=uid()), pendingEndingSessionID=self.sid)
+                                self.state.update(phase='inactive', active=False)
                                 (self.root/'result-loaded').touch()
                         self.mode=None
                 common=dict(appRunning=True,pid=os.getpid(),updatedAt=now())

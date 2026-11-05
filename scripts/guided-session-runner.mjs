@@ -129,25 +129,37 @@ async function runRecord(p){
  await connect();await desktop.view({app:scene.config.startingApp,max:scene.config.maxElements??200});lastReadApp=scene.config.startingApp;
  const action=execute(run,'record',scene.plan);action.catch(()=>{});publish({phase:'recording',message:'Executing the same practiced action plan.'});
  await appCommand('record',{gate});await action;
- const until=Date.now()+45000;while(Date.now()<until){const state=valid(run);if(state.phase==='completed')break;if(['blocked','suspended'].includes(state.phase))throw Error(state.message);await sleep(25)}
- if(valid(run).phase!=='completed')throw Error('Recording completion was not received');
+ const until=Date.now()+45000;
+ while(Date.now()<until){
+  const state=practice();
+  if(!sameID(state.runID,run)||!sameID(state.approval?.draft?.sessionID,scene.config.sessionID))throw Error('Recording identity changed before completion.');
+  if(state.recordingResult && (state.phase==='completed'||(state.phase==='inactive' && state.recordActionsFinished)||sameID(guide().pendingEndingSessionID,scene.config.sessionID))){
+   scene.finishedRecording={run,result:state.recordingResult};break;
+  }
+  valid(run);await sleep(25);
+ }
+ if(!scene.finishedRecording)throw Error('Recording completion was not received');
+ await saveEnding();
+}
+async function saveEnding(){
+ const {run,result}=scene.finishedRecording;
  const pauseUntil=Date.now()+3000;while(Date.now()<pauseUntil&&feedback().focuSee.observedState!=='paused')await sleep(25);paused();
  // Navigation can finish after the last click. Capture the settled, paused
  // screen for the next scene instead of requiring the loading frame to persist.
  let ending,shots;
  const settleUntil=Date.now()+5000;
  for(;;){
-  valid(run);paused();
+  paused();
   ending=await observe();
   shots=await images(`${run}-ending`);
   await sleep(100);
   if(stable(await observe())===stable(ending))break;
   if(Date.now()>=settleUntil)throw Error('The ending screen is still changing after pause.');
  }
- valid(run);paused();
- const file=path.join(scene.dir,'ending-checkpoint.json');atomic(file,{checkpointID:randomUUID(),snapshot:ending,cursor:ending.cursor,images:shots,operationalOnly:true,footageNeedsReview:true,recordingResult:valid(run).recordingResult});
+ paused();
+ const file=path.join(scene.dir,'ending-checkpoint.json');atomic(file,{checkpointID:randomUUID(),snapshot:ending,cursor:ending.cursor,images:shots,operationalOnly:true,footageNeedsReview:true,recordingResult:result});
  const review=guide();
- if(review.remainingChapterScenes && sameID(review.draft?.sessionID,scene.config.sessionID)){
+ if(sameID(review.pendingEndingSessionID,scene.config.sessionID) || (review.remainingChapterScenes && sameID(review.draft?.sessionID,scene.config.sessionID))){
   const id=randomUUID(),root=path.join(appRoot,'GuidedNarrationReview');
   atomic(path.join(root,'commands',id+'.json'),{schemaVersion:1,id,createdAt:utc(),sessionID:scene.config.sessionID,kind:'chapterTakeCompleted'});
   const receipt=path.join(root,'receipts',id+'.json'),deadline=Date.now()+15000;
@@ -188,7 +200,7 @@ async function commands(){
     const g=guide(),p=practice();const wordReview=sameID(g.draft?.sessionID,scene?.config.sessionID)&&['improving','reading','awaitingDecision','audioGenerating','audioReady'].includes(g.phase);if(job||!scene||(!wordReview&&p.phase!=='practiceRequested')||!sameID(c.scene.sessionID,scene.config.sessionID))throw Error('Actions can only change before a new practice, with no active job');
     c.scene.actions.forEach(validateAction);scene.config.actions=c.scene.actions;scene.boundRun=null;scene.targets={};publish({phase:'prepared',message:'Updated actions will be practiced before they can be recorded.'});
    }
-   else if(c.kind==='resume'){if(job||!scene)throw Error('No stopped scene is ready to resume');if(practice().phase==='practiceRequested')scene.boundRun=null;publish({phase:'prepared',message:'Retrying the current gate; approvals are not synthesized.'});}
+   else if(c.kind==='resume'){if(job||!scene)throw Error('No stopped scene is ready to resume');if(scene.finishedRecording&&!scene.complete){launch(saveEnding)}else{if(practice().phase==='practiceRequested')scene.boundRun=null;publish({phase:'prepared',message:'Retrying the current gate; approvals are not synthesized.'});}}
    else if(c.kind==='stop'){stopped=true;if(evidence){evidence.reject(Error('CANCELLED: runner stopped'));evidence=null;}try{const p=practice();if(p.active&&['practicing','recording','waitingForActions','waitingForRecordActions'].includes(p.phase))await appCommand('abort')}catch{}}
    else throw Error('Unknown runner command');atomic(receipt,{accepted:true,commandID:c.id});
   }catch(error){atomic(receipt,{accepted:false,message:error.message})}

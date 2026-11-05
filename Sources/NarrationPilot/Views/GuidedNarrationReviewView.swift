@@ -8,7 +8,12 @@ struct GuidedNarrationReviewView: View {
         GroupBox("Guided Narration & Audio Review") {
             VStack(alignment: .leading, spacing: 8) {
                 if !review.active {
-                    GuidedChapterPicker()
+                    if review.pendingEndingSessionID != nil {
+                        Text("Saving the final scene’s ending screen…")
+                        Button("End Without Ending Checkpoint") { review.end() }
+                    } else {
+                        GuidedChapterPicker()
+                    }
                 }
                 Text(review.active ? "Review \(reviewingAudio ? "audio" : "narration") · \(review.phase)" : "Guided review inactive").font(.subheadline.bold())
                 Text(review.message).font(.caption).textSelection(.enabled)

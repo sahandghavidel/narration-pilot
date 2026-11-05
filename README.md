@@ -400,7 +400,7 @@ commands, and the hands-free flow. The existing
 
 In **Guided Narration & Audio Review**, choose **Choose Baserow Chapter**, select the script, chapter and starting scene, pause FocuSee, and click **Start Chapter Review**. The guided picker uses your configured Baserow connection and loads the remaining narration in chapter order. It has its own selection, independent of the macOS reader.
 
-Use **⌘⇧A** to approve wording or **⌘⇧G** to request a revision from the active agent. After the cloned voice preview, **⌘⇧G** regenerates the voice, **⌘⇧A** requests guided practice, and **⌘⇧M** or **⌃⇧M** records your own mouse and keyboard actions with that exact voice. Manual takes skip practice. Once the take finishes and FocuSee confirms pause, the app reads the next scene. The final take announces chapter completion. Guided takes advance after the runner saves the ending checkpoint. An active agent is needed for wording revisions and guided actions.
+Use **⌘⇧A** to approve wording or **⌘⇧G** to request a revision from the active agent. After the cloned voice preview, **⌘⇧G** regenerates the voice, **⌘⇧A** requests guided practice, and **⌘⇧M** or **⌃⇧M** records your own mouse and keyboard actions with that exact voice. Manual takes skip practice. Once the take finishes and FocuSee confirms pause, the app reads the next scene. The final take announces chapter completion. For guided takes, the app starts the next spoken prompt while the runner saves the ending screen. The next take or practice waits for that checkpoint. An active agent is needed for wording revisions and guided actions.
 
 ### Approved audio recording
 

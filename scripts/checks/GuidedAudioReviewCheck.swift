@@ -152,6 +152,41 @@ struct GuidedAudioReviewCheck {
         review.recordMyself()
         try await waitFor { !review.active }
         precondition(manualCalls == 3 && review.message == "Recording completed for this chapter.")
+        // Pause and successful action completion advance speech before the runner saves its image.
+        let freshChapter = chapter.map { GuidedNarrationDraft(sessionID: UUID(), sceneID: $0.sceneID, revision: 1, narration: $0.narration) }
+        var chapterAnnouncements = 0
+        var promptStart: ContinuousClock.Instant?
+        review.speak = { text, token in
+            if text == "Recording completed for this chapter." { chapterAnnouncements += 1 }
+            promptStart = .now
+            review.heardFirstWord(token)
+            review.speechFinished(token)
+        }
+        review.onAudioApproved = { _ in }
+        try await review.beginChapter(freshChapter)
+        review.approve()
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        review.approve()
+        let firstApproval = review.audioDecision!
+        let pause = ContinuousClock.now
+        review.chapterPauseConfirmed()
+        await review.guidedTakeFinished(firstApproval)
+        precondition(promptStart! >= pause && pause.duration(to: promptStart!) < .seconds(1))
+        precondition(review.draft == freshChapter[1] && review.pendingEndingSessionID == freshChapter[0].sessionID)
+        await review.guidedTakeFinished(firstApproval)
+        review.approve()
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        review.approve()
+        precondition(review.audioDecision == nil, "Practice cannot move the screen before checkpoint acknowledgment")
+        try await send("chapterTakeCompleted", draft: freshChapter[0])
+        let lastApproval = review.audioDecision!
+        review.chapterPauseConfirmed()
+        await review.guidedTakeFinished(lastApproval)
+        await review.guidedTakeFinished(lastApproval)
+        precondition(!review.active && chapterAnnouncements == 1)
+        try await send("chapterTakeCompleted", draft: freshChapter[1])
+        precondition(chapterAnnouncements == 1 && review.pendingEndingSessionID == nil)
+        print("PASS: next prompt before ending screenshot; pause-to-prompt request under one second; chapter completion spoken once")
         // Backward-compatible decoding when earlier snapshots have no audio fields.
         var old = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("status.json"))) as! [String: Any]
         for key in ["audioReview", "audioDecision", "audioAcknowledged", "audioBusy"] { old.removeValue(forKey: key) }

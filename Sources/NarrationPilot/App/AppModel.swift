@@ -3362,6 +3362,18 @@ final class AppModel: ObservableObject {
         })
     }
 
+    private func confirmGuidedPause() async throws {
+        for _ in 0..<15 {
+            try Task.checkCancellation()
+            if await clonedFocuSeeControl.sample() == .paused {
+                guidedNarrationReview.chapterPauseConfirmed()
+                return
+            }
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        throw BaserowSceneError.invalidScenes("FocuSee did not confirm pause after playback.")
+    }
+
     private func configureGuidedNarrationReview() {
         guidedNarrationReview.recordManualAudio = { [weak self] approval in
             guard let self else { throw CancellationError() }
@@ -3381,11 +3393,7 @@ final class AppModel: ObservableObject {
             guard self.approvedAudioRecording.phase == "completed" else {
                 throw BaserowSceneError.invalidScenes(self.approvedAudioRecording.message)
             }
-            for _ in 0..<15 {
-                if await self.clonedFocuSeeControl.sample() == .paused { return }
-                try await Task.sleep(for: .milliseconds(150))
-            }
-            throw BaserowSceneError.invalidScenes("FocuSee did not confirm pause after playback.")
+            try await self.confirmGuidedPause()
         }
         guidedNarrationReview.cancelManualRecording = { [weak self] in self?.approvedAudioRecording.cancel() }
 
@@ -3413,6 +3421,9 @@ final class AppModel: ObservableObject {
             // from finishing a newer draft and never advances the loaded script.
             let speaker = TTSManager()
             self.guidedNarrationSpeech = speaker
+            speaker.$currentWord.filter { !$0.isEmpty }.prefix(1).receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.guidedNarrationReview.heardFirstWord(token) }
+                .store(in: &self.guidedNarrationSpeechSubscriptions)
             speaker.$completedUtteranceCount.dropFirst().receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in self?.guidedNarrationReview.speechFinished(token) }
                 .store(in: &self.guidedNarrationSpeechSubscriptions)
@@ -3482,7 +3493,15 @@ final class AppModel: ObservableObject {
             guard self.approvedAudioRecording.phase == "completed" else {
                 throw NSError(domain: "GuidedPractice", code: 1, userInfo: [NSLocalizedDescriptionKey: self.approvedAudioRecording.message])
             }
+            if self.guidedNarrationReview.remainingChapterScenes != nil {
+                try await self.confirmGuidedPause()
+            }
             return GuidedPracticeRecordingResult(sessionID: sessionID, duration: self.approvedAudioRecording.duration, message: self.approvedAudioRecording.message)
+        }
+        guidedPractice.chapterCompletion = { [weak self] approval in
+            guard let self, self.guidedNarrationReview.remainingChapterScenes != nil else { return false }
+            Task { await self.guidedNarrationReview.guidedTakeFinished(approval) }
+            return true
         }
         guidedPractice.stopPrompt = { [weak self] in self?.guidedNarrationReview.stopPracticePrompt() }
         guidedPractice.cancelRecording = { [weak self] pause in self?.approvedAudioRecording.cancel(pauseRecording: pause) }
