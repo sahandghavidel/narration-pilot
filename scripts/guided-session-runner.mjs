@@ -67,7 +67,7 @@ function assertSnapshot(current,baseline){if(stable(comparableSnapshot(current))
 function validateAction(a){
  if(a.systemOverlay && (!['move','click','highlight'].includes(a.verb)||![a.target?.x,a.target?.y].every(Number.isFinite)))throw Error('System overlays require a coordinate pointer action.');
  if(a.verb==='highlight' && ![a.target?.x,a.target?.y,a.end?.x,a.end?.y].every(Number.isFinite))throw Error('Highlight requires visible text start and end coordinates.');
- if(a.target?.x!==undefined&&(!Number.isFinite(a.target.x)||!Number.isFinite(a.target.y)))throw Error('Coordinate targets must be finite');if(!a.id||!['click','move','highlight','type','key','scroll','activate','hold'].includes(a.verb)||a.practiceSafe!==true)throw Error('Every action must have an ID, supported verb, and explicit practiceSafe:true.');if(a.verb==='type'&&a.submit)throw Error('Submit actions require separate agent handling; they cannot be rehearsed automatically.');}
+ if(a.target?.x!==undefined&&(!Number.isFinite(a.target.x)||!Number.isFinite(a.target.y)))throw Error('Coordinate targets must be finite');if(!a.id||!['click','doubleClick','move','highlight','type','key','scroll','activate','hold'].includes(a.verb)||a.practiceSafe!==true)throw Error('Every action must have an ID, supported verb, and explicit practiceSafe:true.');if(a.verb==='type'&&a.submit)throw Error('Submit actions require separate agent handling; they cannot be rehearsed automatically.');}
 async function target(a){if(a.target?.x!==undefined)return a.target;if(!a.target?.name)throw Error('Action target is missing');const app=a.app??scene.config.startingApp;const v=await desktop.view({app,max:scene.config.maxElements??200});lastReadApp=app;const found=v.elements.filter(e=>e.name===a.target.name&&(!a.target.role||e.role===a.target.role));if(found.length!==1)throw Error('Target must match exactly one visible element: '+a.target.name);const e=found[0];return {x:e.rect.x+e.rect.width/2,y:e.rect.y+e.rect.height/2};}
 async function perform(a){
  if(a.verb==='activate'){await activate(a.app);return}
@@ -79,13 +79,14 @@ async function perform(a){
   return;
  }
  if(lastReadApp!==app){await desktop.view({app,max:scene.config.maxElements??200});lastReadApp=app;}
- if(['click','move','highlight'].includes(a.verb))await performPointer(desktop,a,scene.targets?.[a.id]??await target(a));
+ if(['click','doubleClick','move','highlight'].includes(a.verb))await performPointer(desktop,a,scene.targets?.[a.id]??await target(a));
  else if(a.verb==='type')await desktop.type(a.text,{submit:false});
  else if(a.verb==='key')await desktop.key(a.key);
  else if(a.verb==='scroll')await desktop.scroll({...a.scroll,style:'trackpad'});
 }
 async function performPointer(pointer,a,start){
  if(a.verb==='click')await pointer.click(start);
+ else if(a.verb==='doubleClick')await pointer.dblclick(start);
  else if(a.verb==='move')await pointer.move(start);
  else{
   await pointer.drag(start,a.end,{durationMs:350});
