@@ -47,6 +47,7 @@ struct GuidedNarrationReviewView: View {
                 KeyboardShortcuts.Recorder("Approve wording / audio / practice", name: .approveClonedClipboardAudio)
                 KeyboardShortcuts.Recorder("Improve / regenerate / redo practice", name: .regenerateClonedClipboardAudio)
                 KeyboardShortcuts.Recorder("Record myself", name: .recordGuidedManually)
+                KeyboardShortcuts.Recorder("Record myself (alternate)", name: .recordGuidedManuallyAlternate)
                 Text("Approve the wording to hear the voice. Then choose Record Myself to perform the actions, or approve the voice for guided practice. After the take, the next Baserow scene is read aloud.")
                     .font(.caption2).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(4)

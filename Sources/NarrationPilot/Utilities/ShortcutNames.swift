@@ -4,6 +4,9 @@ extension KeyboardShortcuts.Name {
     static let recordGuidedManually = Self("recordGuidedManually",
         default: KeyboardShortcuts.Shortcut(.m, modifiers: [.command, .shift]))
 
+    static let recordGuidedManuallyAlternate = Self("recordGuidedManuallyAlternate",
+        default: KeyboardShortcuts.Shortcut(.m, modifiers: [.control, .shift]))
+
     static let recordApprovedClipboardAudio = Self("recordApprovedClipboardAudio")
 
     static let approveClonedClipboardAudio = Self(

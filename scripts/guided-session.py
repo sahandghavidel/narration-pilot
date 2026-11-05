@@ -47,6 +47,28 @@ def command(root, kind, **payload):
     raise RuntimeError('No runner receipt. Inspect status before retrying.')
 
 
+def listen_for_chapter_request(review_root):
+    """Remain idle across manual takes and scene changes until the app needs the agent."""
+    while True:
+        status_file = review_root / 'status.json'
+        if status_file.exists() and time.time() - status_file.stat().st_mtime < 4:
+            review = load(status_file)
+            draft = review.get('draft') or {}
+            if review.get('appRunning') and review.get('active') and review.get('remainingChapterScenes') is not None:
+                decision = review.get('decision') or {}
+                if review['phase'] == 'improving' and decision.get('draft') == draft:
+                    return dict(request='revise', draft=draft, eventID=decision['id'])
+                practice_file = review_root / 'Practice/status.json'
+                if review['phase'] == 'audioApproved' and practice_file.exists() and time.time() - practice_file.stat().st_mtime < 4:
+                    practice = load(practice_file)
+                    approval = practice.get('approval') or {}
+                    if (practice.get('active') and practice['phase'] == 'practiceRequested'
+                            and approval.get('draft') == draft
+                            and approval.get('id') == (review.get('audioDecision') or {}).get('id')):
+                        return dict(request='practice', draft=draft, runID=practice['runID'])
+        time.sleep(.25)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=DEFAULT)
@@ -55,6 +77,8 @@ def main():
     start.add_argument('--sdk', type=Path)
     start.add_argument('--app-directory', type=Path)
     start.add_argument('--visual', choices=['auto', 'supplied'], default='auto')
+    listen = sub.add_parser('listen', help='Stand by through manual scenes until practice or revision is requested')
+    listen.add_argument('--review-directory', type=Path, default=DEFAULT.parent / 'GuidedNarrationReview')
     sub.add_parser('status')
     for name in ['prepare', 'update']:
         prepare = sub.add_parser(name)
@@ -96,6 +120,8 @@ def main():
                 if process.poll() is not None: raise RuntimeError('Runner could not start; inspect runner.log')
                 time.sleep(.05)
             else: raise RuntimeError('Runner startup timed out')
+    elif args.command == 'listen':
+        result = listen_for_chapter_request(args.review_directory)
     elif args.command in ['prepare', 'update']:
         result = command(root, args.command, scene=load(args.scene_file))
     elif args.command == 'resume':

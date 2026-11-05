@@ -3891,15 +3891,20 @@ final class AppModel: ObservableObject {
     }
 
     private func registerShortcutHandlers() {
-        KeyboardShortcuts.onKeyUp(for: .recordGuidedManually) { [weak self] in
-            Task { @MainActor in self?.guidedNarrationReview.recordMyself() }
+        let manualShortcuts: [KeyboardShortcuts.Name] = [.recordGuidedManually, .recordGuidedManuallyAlternate]
+        for name in manualShortcuts {
+            KeyboardShortcuts.onKeyUp(for: name) { [weak self] in
+                Task { @MainActor in self?.guidedNarrationReview.recordMyself() }
+            }
         }
         KeyboardShortcuts.onKeyUp(for: .recordApprovedClipboardAudio) { [weak self] in
             Task { @MainActor in self?.recordApprovedClipboardAudio() }
         }
         guidedNarrationReview.$phase.sink { phase in
-            if ["audioReady", "manualRetry"].contains(phase) { KeyboardShortcuts.enable(.recordGuidedManually) }
-            else { KeyboardShortcuts.disable(.recordGuidedManually) }
+            for name in manualShortcuts {
+                if ["audioReady", "manualRetry"].contains(phase) { KeyboardShortcuts.enable(name) }
+                else { KeyboardShortcuts.disable(name) }
+            }
         }.store(in: &cancellables)
         KeyboardShortcuts.onKeyUp(for: .generateClonedClipboardAudio) { [weak self] in
             Task { @MainActor in
