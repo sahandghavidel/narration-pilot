@@ -55,6 +55,11 @@ async function observe(){const views={};for(const app of scene.config.observeApp
 function comparableSnapshot(snapshot){
  const copy=structuredClone(snapshot);
  for(const view of Object.values(copy.views)){
+  if(view.app.bundleId==='com.apple.finder'){
+   for(const el of view.elements){
+    if(el.role==='text')el.name=el.name?.replace(/( selected, )([\d.,]+ [KMGT]B)( available)$/,'$1…$3');
+   }
+  }
   if(view.app.bundleId!=='com.google.Chrome')continue;
   for(const el of view.elements){
    // Chrome sometimes omits the unchecked value after dismissing Downloads.

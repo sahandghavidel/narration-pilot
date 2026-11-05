@@ -63,7 +63,18 @@ def compare(baseline, current, masks=None, views=None):
         content = delta.copy()
         for x, y in [(0, 0), (a.width-corner, 0), (0, a.height-corner), (a.width-corner, a.height-corner)]:
             ImageDraw.Draw(content).rectangle((x, y, x+corner-1, y+corner-1), fill=(0, 0, 0))
-        if app == 'Google Chrome' and content.getbbox() is None and max(channel[1] for channel in delta.getextrema()) <= 32:
+        if app == 'Finder' and views and app in views:
+            view = views[app]
+            win = view['window']
+            for el in view['elements']:
+                if el.get('role') == 'text' and ' selected, ' in el.get('name', '') and el['name'].endswith(' available'):
+                    r = el['rect']
+                    sx, sy = a.width / win['w'], a.height / win['h']
+                    x, y = (r['x']-win['x'])*sx, (r['y']-win['y'])*sy
+                    ImageDraw.Draw(delta).rectangle((x-8, y-8, x+r['width']*sx+8, y+r['height']*sy+8), fill=(0, 0, 0))
+        if app == 'Finder' and views and app in views and max(c[1] for c in delta.getextrema()) <= 16:
+            bounds = None
+        elif app == 'Google Chrome' and content.getbbox() is None and max(channel[1] for channel in delta.getextrema()) <= 32:
             bounds = None
         elif app == 'Google Chrome' and caret_blink(delta, (views or {}).get(app, {})):
             bounds = None
