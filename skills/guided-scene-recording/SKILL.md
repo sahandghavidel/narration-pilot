@@ -28,6 +28,16 @@ Read [references/runner.md](references/runner.md) for the scene format, commands
 4. For an initial scene, establish its starting checkpoint while paused. For an appended scene, use the previous take’s actual ending checkpoint; never replace it with rehearsal results. Supply `baselinePath` when inheriting one. Window geometry, selected tabs, visible state, focus/selections, and actual cursor must match. All demonstrated app/tab/page transitions happen during practice and recording, not only setup.
 5. Start the runner once and prepare the scene. When it reports prepared, submit the exact narration to the existing guided-review helper using the same session ID. For a familiar surface, preparation can overlap wording/audio review while capture is paused. Do not announce practice ready before the actions and checkpoint are prepared.
 
+## Startup and retry discipline
+
+Before saving the first checkpoint, initialize the visual-evidence tool and settle the intended foreground app. If native capture is unavailable, prepare the CUA evidence bridge now; each later gate still requires a fresh image. Do not start spoken review until the runner reports `prepared`.
+
+Use a fresh session UUID and revision 1 for every new review, including a review restarted after `end`. Revisions within an active review follow the matching improvement event. A new review may reuse cached approved audio, but it must receive its own real user approvals.
+
+A previous take’s idle timing file can be old. The runner must wait for new playback progress before acting; do not treat the old file as failed playback or add a fixed recording delay. Keep current-run and approved-audio identity checks, actual player timing, and fresh capture feedback. Run `scripts/checks/GuidedSessionRunnerCheck.py` after changing this startup logic; it covers an old timing file before a new take.
+
+For a foreground/checkpoint failure, keep capture paused, inspect the actual difference, and allow one diagnosed retry. If it repeats, stop and report the specific failure rather than repeatedly restarting workers. An initial checkpoint may be established again before any review/practice; an inherited or already practiced checkpoint must be restored, never rebased to hide a mismatch. After an aborted take, verify pause and return to real-user-approved practice; do not reuse the prior A decision to silently record again.
+
 ## Run the prepared flow
 
 - The persistent process consumes app practice/record requests, resolves the approved word timings to the authored cues, restores the checkpoint, verifies fresh evidence, plays the WAV, executes real cursor actions, and reports action results. Use the WAV player clock for synchronization; transcription guides actions and never determines the hard stop.
