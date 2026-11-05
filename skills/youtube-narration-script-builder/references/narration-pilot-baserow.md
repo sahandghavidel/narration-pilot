@@ -14,7 +14,7 @@ Read live schemas with GET /api/database/fields/table/740/ and /739/. Use `user_
 
 POST /api/database/rows/table/{table}/ creates a row. PATCH /api/database/rows/table/{table}/{row}/ updates identified fields. After writing, re-fetch and verify exact values, links, Part and unique continuous Scene Number. Never reuse, move, overwrite, renumber, clear, or delete another script's rows.
 
-A new scene payload contains its continuous Scene Number, Script:[scriptID], Part, approved Narration, and empty On Screen/Annotation/code fields where present and writable. Use only actual schema fields. Save each row once per logical scene. Preserve its row ID in private runtime metadata mapped to guided session and scene; revisions patch the same row and audio regeneration does not write a new row. On an uncertain POST result, re-read linked rows and reconcile the exact chapter, number and narration before retrying; do not issue a blind second POST.
+During recording, reuse the existing linked row; an unchanged wording approval needs verification, not another row. New scenes require an explicit script-creation request. A new scene payload contains its continuous Scene Number, Script:[scriptID], Part, approved Narration, and empty On Screen/Annotation/code fields where present and writable. Use only actual schema fields. Save each row once per logical scene. Preserve its row ID in private runtime metadata mapped to guided session and scene; revisions patch the same row and audio regeneration does not write a new row. On an uncertain POST result, re-read linked rows and reconcile the exact chapter, number and narration before retrying; do not issue a blind second POST.
 
 ## Approval and validation
 
