@@ -36,13 +36,15 @@ def ensure_live(root):
     return value
 
 
-def send(root, session, kind, draft=None, event_id=None):
+def send(root, session, kind, draft=None, event_id=None, next_candidate=None):
     ensure_live(root)
     command_id = str(uuid.uuid4())
     command = dict(schemaVersion=1, id=command_id, sessionID=str(uuid.UUID(session)), kind=kind,
                    createdAt=datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'))
     if draft is not None:
         command['draft'] = draft
+    if next_candidate is not None:
+        command['nextCandidate'] = next_candidate
     if event_id:
         command['eventID'] = str(uuid.UUID(event_id))
     path = root / 'commands' / (command_id + '.json')
@@ -76,6 +78,8 @@ def main():
     text.add_argument('--text')
     text.add_argument('--text-file', type=Path)
     submit.add_argument('--event-id', help='Required for a revised draft; exact improvement event ID')
+    submit.add_argument('--next-session-id', help='Identity of the next queued scene whose wording needs to follow this revision')
+    submit.add_argument('--next-text', help='Replacement candidate to read for normal A/G review at handoff')
     watch = commands.add_parser('watch')
     watch.add_argument('--session-id', required=True)
     watch.add_argument('--revision', type=int, required=True)
@@ -96,7 +100,13 @@ def main():
         session = str(uuid.UUID(args.session_id)) if args.session_id else str(uuid.uuid4())
         narration = args.text if args.text is not None else args.text_file.read_text()
         draft = dict(sessionID=session, sceneID=args.scene_id, revision=args.revision, narration=narration)
-        result = dict(sessionID=session, receipt=send(root, session, 'submit', draft=draft, event_id=args.event_id), status=status(root))
+        candidate = None
+        if args.next_text is not None or args.next_session_id is not None:
+            queue = ensure_live(root).get('remainingChapterScenes') or []
+            if not args.event_id or not args.next_text or not queue or queue[0]['sessionID'].lower() != (args.next_session_id or '').lower():
+                raise RuntimeError('Supply the current revision event and the matching next scene ID and wording')
+            candidate = dict(queue[0], narration=args.next_text)
+        result = dict(sessionID=session, receipt=send(root, session, 'submit', draft=draft, event_id=args.event_id, next_candidate=candidate), status=status(root))
     elif args.command == 'watch':
         if not 0 < args.timeout <= 60:
             raise RuntimeError('Watch timeout must be between 0 and 60 seconds; resume another bounded watch if needed')

@@ -24,6 +24,7 @@ struct GuidedNarrationCommand: Codable, Sendable {
     var kind: String
     var draft: GuidedNarrationDraft?
     var eventID: UUID?
+    var nextCandidate: GuidedNarrationDraft?
 }
 
 struct GuidedAudioVoice: Codable, Equatable, Sendable {
@@ -70,6 +71,7 @@ struct GuidedNarrationSnapshot: Codable {
     var audioBusy: Bool?
     var pendingEndingSessionID: UUID?
     var firstWordAfterPauseMilliseconds: Double?
+    var nextCandidate: GuidedNarrationDraft?
     var remainingChapterScenes: [GuidedNarrationDraft]?
     var practice: [String: String]?
 }
@@ -91,6 +93,7 @@ final class GuidedNarrationReview: ObservableObject {
     @Published private(set) var audioDecision: GuidedAudioDecision?
     @Published private(set) var audioAcknowledged = false
     @Published private(set) var audioBusy = false
+    private var nextCandidate: GuidedNarrationDraft?
     private(set) var remainingChapterScenes: [GuidedNarrationDraft]?
     @Published private(set) var pendingEndingSessionID: UUID?
     private var deferredAudioChoice: (draft: GuidedNarrationDraft, manual: Bool)?
@@ -154,6 +157,7 @@ final class GuidedNarrationReview: ObservableObject {
                let saved = try? Self.decoder().decode(GuidedNarrationSnapshot.self, from: data), saved.schemaVersion == 1 {
                 draft = saved.draft; active = saved.active
                 remainingChapterScenes = saved.remainingChapterScenes
+                nextCandidate = saved.nextCandidate
                 pendingEndingSessionID = saved.pendingEndingSessionID
                 audioReview = saved.audioReview
                 if let draft, active {
@@ -337,6 +341,7 @@ final class GuidedNarrationReview: ObservableObject {
         deferredAudioChoice = nil
         confirmedPauseTime = nil
         timedSpeechToken = nil
+        nextCandidate = nil
         remainingChapterScenes = nil
         onEnd()
         generation = UUID(); checkingSpeech = false
@@ -439,6 +444,7 @@ final class GuidedNarrationReview: ObservableObject {
     }
 
     private func finishTake(endingSessionID: UUID? = nil) async throws {
+        let candidate = nextCandidate
         let remaining = remainingChapterScenes
         let pauseTime = confirmedPauseTime
         end()
@@ -446,7 +452,7 @@ final class GuidedNarrationReview: ObservableObject {
         pendingEndingSessionID = endingSessionID
         if let remaining, let next = remaining.first {
             remainingChapterScenes = Array(remaining.dropFirst())
-            try await readChapterScene(next)
+            try await readChapterScene(candidate ?? next)
         } else if remaining != nil {
             message = "Recording completed for this chapter."
             publish()
@@ -567,6 +573,14 @@ final class GuidedNarrationReview: ObservableObject {
             } else {
                 guard next.revision == 1, !FileManager.default.fileExists(atPath: eventURL(next).path) else { throw error("Start a new review with a fresh session ID and revision 1.") }
             }
+            if let candidate = command.nextCandidate {
+                guard active, let queued = remainingChapterScenes?.first,
+                      queued.sessionID == candidate.sessionID, queued.sceneID == candidate.sceneID,
+                      queued.revision == candidate.revision, candidate.revision == 1,
+                      !candidate.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      candidate.narration.count <= 12000 else { throw error("Proposed wording must match the next queued scene.") }
+            }
+            nextCandidate = command.nextCandidate
             generation = UUID(); cancelAudio(); stopOwnedSpeech()
             audioReview = nil; audioDecision = nil; audioAcknowledged = false
             draft = next; active = true; decision = nil; acknowledged = false; checkingSpeech = false
@@ -638,7 +652,7 @@ final class GuidedNarrationReview: ObservableObject {
     }
     private func publish() {
         do {
-            try write(GuidedNarrationSnapshot(appRunning: running, pid: ProcessInfo.processInfo.processIdentifier, updatedAt: Date(), active: active, phase: phase, message: message, draft: draft, decision: decision, acknowledged: acknowledged, speechActive: speechToken != nil, audioReview: audioReview, audioDecision: audioDecision, audioAcknowledged: audioAcknowledged, audioBusy: audioBusy, pendingEndingSessionID: pendingEndingSessionID, firstWordAfterPauseMilliseconds: firstWordAfterPauseMilliseconds, remainingChapterScenes: remainingChapterScenes, practice: practiceSummary()), to: directory.appendingPathComponent("status.json"))
+            try write(GuidedNarrationSnapshot(appRunning: running, pid: ProcessInfo.processInfo.processIdentifier, updatedAt: Date(), active: active, phase: phase, message: message, draft: draft, decision: decision, acknowledged: acknowledged, speechActive: speechToken != nil, audioReview: audioReview, audioDecision: audioDecision, audioAcknowledged: audioAcknowledged, audioBusy: audioBusy, pendingEndingSessionID: pendingEndingSessionID, firstWordAfterPauseMilliseconds: firstWordAfterPauseMilliseconds, nextCandidate: nextCandidate, remainingChapterScenes: remainingChapterScenes, practice: practiceSummary()), to: directory.appendingPathComponent("status.json"))
         } catch { message = "Could not save narration review status: \(error.localizedDescription)" }
     }
     private func error(_ text: String) -> NSError { NSError(domain: "GuidedNarrationReview", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }

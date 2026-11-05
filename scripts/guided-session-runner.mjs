@@ -28,7 +28,10 @@ let stopped=false,job=null,scene=null,desktop=null,evidence=null,sequence=0,last
 let state={schemaVersion:1,pid:process.pid,running:true,phase:'idle',message:'Runner ready for a prepared scene.',sequence};
 function publish(patch={}){state={...state,...patch,updatedAt:new Date().toISOString()};atomic(path.join(root,'status.json'),state)}
 function emit(kind,data={}){const event={id:randomUUID(),sequence:++sequence,kind,createdAt:new Date().toISOString(),...data};atomic(path.join(root,'events',`${String(sequence).padStart(8,'0')}-${event.id}.json`),event);publish({sequence,lastEvent:event});return event}
-function attention(message){publish({phase:'needsAgent',message});emit('needsAgent',{message,sessionID:scene?.config.sessionID})}
+function attention(message){
+ publish({phase:'needsAgent',reason:'workflowFailure',message});
+ emit('needsAgent',{message,sessionID:scene?.config.sessionID,runID:scene?.boundRun});
+}
 function fresh(p){const data=read(p);if(Date.now()-fs.statSync(p).mtimeMs>4000||data.appRunning===false)throw Error('App feedback is stale; do not perform screen actions.');return data}
 const guide=()=>fresh(path.join(appRoot,'GuidedNarrationReview/status.json'));
 const practice=()=>fresh(path.join(appRoot,'GuidedNarrationReview/Practice/status.json'));
@@ -70,7 +73,23 @@ function comparableSnapshot(snapshot){
  }
  return copy;
 }
-function assertSnapshot(current,baseline){if(stable(comparableSnapshot(current))!==stable(comparableSnapshot(baseline)))throw Error('Starting screen/cursor differs from the immutable checkpoint.');}
+function assertSnapshot(current,baseline){
+ const actual=comparableSnapshot(current), expected=comparableSnapshot(baseline);
+ if(stable(actual)===stable(expected))return;
+ for(const [app,before] of Object.entries(expected.views)){
+  const after=actual.views[app];
+  if(!after || before.window.title!==after.window.title)throw Error(app+' starting window changed. Expected “'+before.window.title+'”, found “'+(after?.window.title??'no window')+'”.');
+  if(stable(before.window)!==stable(after.window))throw Error(app+' window position or size changed.');
+  const index=before.elements.findIndex((element,i)=>stable(element)!==stable(after.elements[i]));
+  if(index>=0 || before.elements.length!==after.elements.length){
+   const i=index>=0?index:before.elements.length, prev=before.elements[i], next=after.elements[i];
+   const property=Object.keys({...prev,...next}).find(key=>stable(prev?.[key])!==stable(next?.[key]));
+   throw Error(app+' starting screen changed: '+(prev?.role??next?.role??'control')+' '+(property??'presence')+' differs at item '+(i+1)+'.');
+  }
+ }
+ if(stable(actual.cursor)!==stable(expected.cursor))throw Error('Cursor has not returned to the practiced starting position.');
+ throw Error('Observed app or window differs from the practiced starting screen.');
+}
 function validateAction(a){
  if(a.systemOverlay && (!['move','click','highlight'].includes(a.verb)||![a.target?.x,a.target?.y].every(Number.isFinite)))throw Error('System overlays require a coordinate pointer action.');
  if(['highlight','previewDrag'].includes(a.verb) && ![a.target?.x,a.target?.y,a.end?.x,a.end?.y].every(Number.isFinite))throw Error('Highlight requires visible text start and end coordinates.');

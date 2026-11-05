@@ -49,12 +49,12 @@ struct GuidedAudioReviewCheck {
             approvals.append(id)
         }
         review.stopAudioPreview = { if let id = $0 { stopped.append(id) } }
-        func send(_ kind: String, draft: GuidedNarrationDraft, eventID: UUID? = nil) async throws {
-            let c = GuidedNarrationCommand(id: UUID(), sessionID: draft.sessionID, kind: kind, draft: kind == "submit" ? draft : nil, eventID: eventID)
+        func send(_ kind: String, draft: GuidedNarrationDraft, eventID: UUID? = nil, next: GuidedNarrationDraft? = nil, accepted: Bool = true) async throws {
+            let c = GuidedNarrationCommand(id: UUID(), sessionID: draft.sessionID, kind: kind, draft: kind == "submit" ? draft : nil, eventID: eventID, nextCandidate: next)
             try GuidedNarrationReview.encoder().encode(c).write(to: root.appendingPathComponent("commands/\(c.id.uuidString).json"), options: .atomic)
             await review.processInbox()
             let r = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("receipts/\(c.id.uuidString).json"))) as! [String: Any]
-            precondition(r["accepted"] as? Bool == true, r.description)
+            precondition(r["accepted"] as? Bool == accepted, r.description)
         }
         func waitFor(_ condition: @MainActor () -> Bool) async throws {
             for _ in 0..<200 { if condition() { return }; try await Task.sleep(for: .milliseconds(5)) }
@@ -139,21 +139,24 @@ struct GuidedAudioReviewCheck {
         try await review.beginChapter(chapter)
         review.improve()
         var revised = chapter[0]; revised.narration = "Revised first scene."; revised.revision = 2
-        try await send("submit", draft: revised, eventID: review.decision!.id)
+        var candidate = chapter[1]; candidate.narration = "The app is open."
+        try await send("submit", draft: revised, eventID: review.decision!.id, next: chapter[0], accepted: false)
+        try await send("submit", draft: revised, eventID: review.decision!.id, next: candidate)
         review.approve()
         try await waitFor { review.phase == "audioReady" && !review.audioBusy }
         review.recordMyself(); review.recordMyself()
         try await waitFor { review.phase == "manualRetry" }
         precondition(manualCalls == 1 && review.draft == revised)
         review.recordMyself()
-        try await waitFor { review.phase == "awaitingDecision" && review.draft == chapter[1] }
+        try await waitFor { review.phase == "awaitingDecision" && review.draft == candidate }
         review.approve()
         try await waitFor { review.phase == "audioReady" && !review.audioBusy }
         review.recordMyself()
         try await waitFor { !review.active }
         precondition(manualCalls == 3 && review.message == "Recording completed for this chapter.")
         // Pause and successful action completion advance speech before the runner saves its image.
-        let freshChapter = chapter.map { GuidedNarrationDraft(sessionID: UUID(), sceneID: $0.sceneID, revision: 1, narration: $0.narration) }
+        var freshChapter = chapter.map { GuidedNarrationDraft(sessionID: UUID(), sceneID: $0.sceneID, revision: 1, narration: $0.narration) }
+        freshChapter.append(GuidedNarrationDraft(sessionID: UUID(), sceneID: "final", revision: 1, narration: "Ready for the first task."))
         var chapterAnnouncements = 0
         var promptStart: ContinuousClock.Instant?
         review.speak = { text, token in
@@ -171,7 +174,7 @@ struct GuidedAudioReviewCheck {
         let pause = ContinuousClock.now
         review.chapterPauseConfirmed()
         await review.guidedTakeFinished(firstApproval)
-        precondition(promptStart! >= pause && pause.duration(to: promptStart!) < .seconds(1))
+        precondition(promptStart! >= pause && pause.duration(to: promptStart!) < .milliseconds(500))
         precondition(review.draft == freshChapter[1] && review.pendingEndingSessionID == freshChapter[0].sessionID)
         await review.guidedTakeFinished(firstApproval)
         review.approve()
@@ -179,14 +182,24 @@ struct GuidedAudioReviewCheck {
         review.approve()
         precondition(review.audioDecision == nil, "Practice cannot move the screen before checkpoint acknowledgment")
         try await send("chapterTakeCompleted", draft: freshChapter[0])
+        let middleApproval = review.audioDecision!
+        let secondPause = ContinuousClock.now
+        review.chapterPauseConfirmed()
+        await review.guidedTakeFinished(middleApproval)
+        precondition(review.draft == freshChapter[2] && chapterAnnouncements == 0)
+        precondition(promptStart! >= secondPause && secondPause.duration(to: promptStart!) < .milliseconds(500))
+        try await send("chapterTakeCompleted", draft: freshChapter[1])
+        review.approve()
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        review.approve()
         let lastApproval = review.audioDecision!
         review.chapterPauseConfirmed()
         await review.guidedTakeFinished(lastApproval)
         await review.guidedTakeFinished(lastApproval)
         precondition(!review.active && chapterAnnouncements == 1)
-        try await send("chapterTakeCompleted", draft: freshChapter[1])
+        try await send("chapterTakeCompleted", draft: freshChapter[2])
         precondition(chapterAnnouncements == 1 && review.pendingEndingSessionID == nil)
-        print("PASS: next prompt before ending screenshot; pause-to-prompt request under one second; chapter completion spoken once")
+        print("PASS: next prompt before ending screenshot; pause-to-prompt request under 500 ms; chapter completion spoken once")
         // Backward-compatible decoding when earlier snapshots have no audio fields.
         var old = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("status.json"))) as! [String: Any]
         for key in ["audioReview", "audioDecision", "audioAcknowledged", "audioBusy"] { old.removeValue(forKey: key) }

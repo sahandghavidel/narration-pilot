@@ -62,6 +62,18 @@ def listen_for_chapter_request(review_root):
                 if review['phase'] == 'audioApproved' and practice_file.exists() and time.time() - practice_file.stat().st_mtime < 4:
                     practice = load(practice_file)
                     approval = practice.get('approval') or {}
+                    if practice.get('active') and approval.get('draft') == draft:
+                        if practice['phase'] == 'blocked':
+                            return dict(request='checkPractice', draft=draft, runID=practice['runID'], message=practice.get('message'))
+                        runner_file = review_root.parent / 'GuidedSessionRunner/status.json'
+                        if runner_file.exists() and time.time() - runner_file.stat().st_mtime < 4:
+                            runner = load(runner_file)
+                            event = runner.get('lastEvent') or {}
+                            if (runner.get('running') and runner.get('phase') == 'needsAgent'
+                                    and runner.get('reason') == 'workflowFailure' and event.get('kind') == 'needsAgent'
+                                    and event.get('sessionID') == draft.get('sessionID')
+                                    and event.get('runID') == practice.get('runID')):
+                                return dict(request='checkPractice', draft=draft, runID=practice['runID'], message=event['message'])
                     if (practice.get('active') and practice['phase'] == 'practiceRequested'
                             and approval.get('draft') == draft
                             and approval.get('id') == (review.get('audioDecision') or {}).get('id')):

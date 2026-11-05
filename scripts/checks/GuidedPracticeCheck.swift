@@ -118,7 +118,8 @@ import Foundation
         precondition(practice.phase == "practiceReady" && practice.promptBusy)
         precondition(practice.audioFinished && practice.actionsFinished)
         // G can interrupt the ready announcement and repeat without waiting for it.
-        // G repeats practice with the same material; no TTS or transcription is repeated.
+        // A prep announcement failing must never swallow an improvement request.
+        practice.prompt = { text in !text.hasPrefix("Preparing improved practice") }
         practice.redo()
         try await waitFor { practice.phase == "practiceRequested" }
         precondition(practice.runID != firstRun && loads == 1 && practice.attempt == 2)

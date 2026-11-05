@@ -249,14 +249,10 @@ final class GuidedPracticeSession: ObservableObject {
         audioFinished = false; actionsFinished = false; actionResults = []; audioEndedAt = nil
         recordingResult = nil; recordingSessionID = nil; recordActionsFinished = false; recordActionResults = []
         elapsed = 0; duration = assets?.context.duration ?? approval.audio.duration ?? 0
-        phase = "loadingTimings"; message = "Loading the approved WAV and its saved word timings…"; promptBusy = true
+        phase = "loadingTimings"; message = "Loading the approved WAV and its saved word timings…"; promptBusy = false
         let operation = UUID(); operationID = operation; publish()
         worker = Task { [weak self] in
             guard let self, self.operationID == operation, self.active, !Task.isCancelled else { return }
-            guard await self.prompt(self.attempt > 1 ? "Preparing improved practice." : "Preparing practice."), self.operationID == operation, self.active else {
-                if self.operationID == operation { self.promptBusy = false; self.block("Spoken practice prompt could not finish. Use redo when idle.") }; return
-            }
-            self.promptBusy = false
             do {
                 let assets: GuidedPracticeAssets
                 if let cached = self.assets { assets = cached } else { assets = try await self.loadAssets(approval) }
