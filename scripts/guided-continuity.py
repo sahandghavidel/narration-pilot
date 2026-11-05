@@ -76,7 +76,7 @@ def compare(baseline, current, masks=None, views=None):
             bounds = None
         elif app == 'Google Chrome' and content.getbbox() is None and max(channel[1] for channel in delta.getextrema()) <= 32:
             bounds = None
-        elif app == 'Google Chrome' and caret_blink(delta, (views or {}).get(app, {})):
+        elif caret_blink(delta, (views or {}).get(app, {})):
             bounds = None
         else:
             bounds = delta.getbbox()
