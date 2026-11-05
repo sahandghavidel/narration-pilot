@@ -124,7 +124,7 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual(cli('start')['pid'],started['pid'])
                 config=dict(sessionID=app.sid,sceneID='fixture',startingApp='Calculator',observeApps=['Calculator'],
                             actions=[dict(id='one',description='Click One',verb='click',target=dict(name='One',role='button'),atSeconds=0,practiceSafe=True),dict(id='equals',description='Click Equals',verb='click',target=dict(name='Equals',role='button'),cue=dict(word='equals'),practiceSafe=True)],
-                            restoreActions=[dict(id='clear',verb='click',target=dict(name='All Clear',role='button'),practiceSafe=True)])
+                            restoreActions=[dict(id='clear',verb='click',target=dict(name='All Clear',role='button'),whenWindowTitleExcludes='Calculator',practiceSafe=True)])
                 scene=root/'scene.json';scene.write_text(json.dumps(config));cli('prepare','--scene-file',str(scene))
                 launched=False;improvement_sent=False;improvement_handled=False;second_scene=False
                 supplied=set();until=time.monotonic()+20
@@ -173,6 +173,7 @@ class RunnerCheck(unittest.TestCase):
                 self.assertFalse(app.errors,app.errors)
                 if denied:self.assertGreaterEqual(len(supplied),4) # Initial, practice, redo, record, ending.
                 trace=[json.loads(x) for x in (root/'app/trace.jsonl').read_text().splitlines()]
+                self.assertEqual(sum(x['verb']=='click' and x['value']=='All Clear' for x in trace),2)
                 self.assertEqual(sum(x['verb']=='minimize' for x in trace),2 if reappear else 1)
                 self.assertEqual(sum(x['verb']=='activate' and x['value']=='ChatGPT' for x in trace),2 if reappear else 1)
                 self.assertEqual(sum(x['verb']=='click' and x['value']=='One' for x in trace),2 if bad else 3)

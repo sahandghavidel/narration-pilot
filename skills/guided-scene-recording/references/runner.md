@@ -37,6 +37,8 @@ Choose a fresh session UUID and author the scene file from the live UI. A minima
 
 Supported verbs: click, move, type, key, scroll, activate, hold. Stable named targets are cached from early observation; `deferred:true` resolves a target freshly after a visible transition. Coordinate targets require current visual grounding. Type uses `text` and never submits; keys use `key`; scroll uses AgentCursor `scroll` options and trackpad style. Every automatic action must be practice-safe. Keep `restoreActions` explicit and reversible. Initial setup is separate from actions that viewers must see.
 
+A restore action may include `whenWindowTitleExcludes`: it runs only when a fresh AgentCursor window title lacks that text. Use this for idempotent restoration, so the first practice does not navigate away from an already correct start. This does not relax the subsequent continuity gate.
+
 The first baseline is immutable. An inherited `baselinePath` points to the prior ending-checkpoint JSON; the current screen must match it. Use `cosmeticMasks` only for observed transient non-content differences: per-app arrays of `{"rect":[x,y,width,height],"reason":"specific cosmetic difference"}` in normalized image coordinates. Default is strict comparison. Each region is limited to 8% of the image; that bound does not make a semantically important mask acceptable.
 
 Once prepared, submit narration:
@@ -47,29 +49,13 @@ python3 /Users/sahand/Desktop/projects-test/narration-pilot/scripts/guided-narra
 
 The same worker then handles practice, G redo, and A-to-record. It never sends those approval shortcuts. Physical keys are handled by Narration Pilot.
 
-## CUA evidence fallback
+## AgentCursor screenshots only
 
-A `needsEvidence` status contains `evidenceRequest.id`, `apps`, `label`, and destination directory. Capture those windows through CUA **without mouse actions**. Initialize CUA using its documented single entry call if needed, then use the app screenshots with `{emit:false}` and write their returned bytes to new local files. Do not bring up preview windows during a take.
+Use AgentCursor for all GUI inspection and actions. Before the initial baseline, run a real SDK screenshot and verify it succeeds, with transient overlays removed and editable fields defocused when no typing is intended. Inspect the returned local image as needed. Computer Use/CUA is not used in this workflow.
 
-Example after CUA is initialized:
+If native capture fails, report the concrete permission state and let Sahand handle the macOS permission UI. The runner still has a legacy supplied-image mechanism for isolated checks; `needsEvidence` is not permission to switch to Computer Use. Do not supply stale images or assert visual matching from AX alone.
 
-```js
-var fs = await import('node:fs/promises');
-var app = await cua.getApp('com.apple.calculator');
-await fs.writeFile('/absolute/work/current-calculator.png', await app.getScreenshot({emit:false}));
-```
-
-Create a manifest with the actual capture time and exactly the requested app names:
-
-```json
-{"capturedAt":"CURRENT-ISO8601-UTC-TIME","images":{"Calculator":"/absolute/work/current-calculator.png","Google Chrome":"/absolute/work/current-chrome.png"}}
-```
-
-```sh
-python3 /Users/sahand/.codex/skills/guided-scene-recording/scripts/session.py evidence --request-id REQUEST_UUID --manifest /absolute/work/evidence.json
-```
-
-The runner verifies freshness, unchanged structured state/cursor, and pixels before passing the app’s gate. No native-capture permission is granted or bypassed. If images differ, inspect the specific difference; repair the screen while paused and `resume`. Do not weaken checks to ignore the actual problem.
+Browser rehearsal can change incidental history, tracking parameters, visited-link styling, or hover status text. Avoid repeated blind attempts to reverse those changes. If strict comparison stops, use fresh AgentCursor screenshots and live controls to inspect and restore the meaningful starting page, query, visible target/layout, focus and cursor. An agent-authored gate must preserve the practiced checkpoint ID and save the actual images, observations, and explicitly reviewed incidental differences. Do not accept a different page, query, missing target, changed layout, or a hidden recording overlay as cosmetic.
 
 ## Events, repairs, and shutdown
 

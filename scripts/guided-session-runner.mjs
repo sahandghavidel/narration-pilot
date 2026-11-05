@@ -21,7 +21,7 @@ const hash=v=>createHash('sha256').update(stable(v)).digest('hex');
 const sameID=(a,b)=>String(a??'').toLowerCase()===String(b??'').toLowerCase();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const utc=()=>new Date().toISOString().replace(/\.\d{3}Z$/,'Z');
-let stopped=false,job=null,scene=null,desktop=null,evidence=null,sequence=0,lastReadApp=null,codexMinimized=false,nativeCapture=flags.visual!=='supplied';
+let stopped=false,job=null,scene=null,desktop=null,evidence=null,sequence=0,lastReadApp=null,nativeCapture=flags.visual!=='supplied';
 let state={schemaVersion:1,pid:process.pid,running:true,phase:'idle',message:'Runner ready for a prepared scene.',sequence};
 function publish(patch={}){state={...state,...patch,updatedAt:new Date().toISOString()};atomic(path.join(root,'status.json'),state)}
 function emit(kind,data={}){const event={id:randomUUID(),sequence:++sequence,kind,createdAt:new Date().toISOString(),...data};atomic(path.join(root,'events',`${String(sequence).padStart(8,'0')}-${event.id}.json`),event);publish({sequence,lastEvent:event});return event}
@@ -48,7 +48,7 @@ async function connect(){desktop?.close();lastReadApp=null;desktop=new sdk.Deskt
 async function activate(app){const result=await desktop.activate(app);if(!result.active)throw Error('Could not activate '+app);lastReadApp=app;return result}
 async function minimizeCodex(){
  const app=(await desktop.apps()).find(a=>a.bundleId==='com.openai.codex');
- if(app&&(!codexMinimized||app.active)){const activated=await desktop.activate(app.name);if(!activated.active||activated.bundleId!=='com.openai.codex')throw Error('Could not select Codex for minimization');await desktop.key('cmd+m');codexMinimized=true;lastReadApp=null;}
+ if(app?.active){const activated=await desktop.activate(app.name);if(!activated.active||activated.bundleId!=='com.openai.codex')throw Error('Could not select Codex for minimization');await desktop.key('cmd+m');lastReadApp=null;}
 }
 async function observe(){const views={};for(const app of scene.config.observeApps){views[app]=normalize(await desktop.view({app,max:scene.config.maxElements??200}));lastReadApp=app;}return {views,cursor:await desktop.actions.cursor()}}
 function assertSnapshot(current,baseline){if(stable(current)!==stable(baseline))throw Error('Starting screen/cursor differs from the immutable checkpoint.');}
@@ -76,7 +76,7 @@ async function compareImages(baseline,current){const file=path.join(scene.dir,'i
 async function bindTargets(){scene.targets={};for(const a of [...scene.config.actions,...(scene.config.restoreActions??[])])if(a.target&&!a.deferred)scene.targets[a.id]=await target(a);}
 async function restore(run,label){
  paused();await connect();await minimizeCodex();
- for(const a of scene.config.restoreActions??[])await perform(a);
+ for(const a of scene.config.restoreActions??[]){if(a.whenWindowTitleExcludes){const v=await desktop.view({app:a.app??scene.config.startingApp,max:scene.config.maxElements??200});lastReadApp=a.app??scene.config.startingApp;if(v.window.title.includes(a.whenWindowTitleExcludes))continue}await perform(a);}
  await activate(scene.config.startingApp);
  for(let n=0;n<4;n++){await desktop.move({x:scene.baseline.cursor.x+.5,y:scene.baseline.cursor.y+.5});const p=await desktop.actions.cursor();if(stable(p)===stable(scene.baseline.cursor))break}
  assertSnapshot(await observe(),scene.baseline.snapshot);
