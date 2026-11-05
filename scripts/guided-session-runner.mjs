@@ -39,7 +39,7 @@ async function appCommand(kind,payload={}){
  while(Date.now()<until){if(fs.existsSync(receipt)){const r=read(receipt);if(!r.accepted)throw Error(r.message);return r}await sleep(20)}
  throw Error('Command receipt timed out; inspect status before retrying.');
 }
-function normalize(view){return {app:{name:view.app.name,bundleId:view.app.bundleId},window:view.window,elements:view.elements.map(({ref,...e})=>e)}}
+function normalize(view){return {app:{name:view.app.name,bundleId:view.app.bundleId},window:view.window,elements:view.elements.map(({ref,...e})=>({...e,...(e.role==='radio'&&view.app.bundleId==='com.google.Chrome'?{name:e.name.replace(/ - Memory usage - [\d.,]+ [KMGT]?B$/,'')}:{})}))}}
 class SessionPersona extends sdk.Persona {
  thinkTimeMs(n){return Math.round(super.thinkTimeMs(n)*(scene?.config.pacing?.reaction??1))}
  traits(){const t=super.traits();return{...t,speedFactor:t.speedFactor*(scene?.config.pacing?.speed??1),dwellScale:t.dwellScale*(scene?.config.pacing?.dwell??1)}}

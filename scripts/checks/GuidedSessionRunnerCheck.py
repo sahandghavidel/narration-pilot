@@ -179,7 +179,10 @@ class RunnerCheck(unittest.TestCase):
                 self.assertTrue(all(x['phase']!='recording' for x in trace if x['verb']=='click' and x['value']=='All Clear'))
             finally:
                 if started:
-                    try:cli('stop')
+                    try:
+                        cli('stop')
+                        deadline=time.monotonic()+3
+                        while json.loads((worker/'status.json').read_text()).get('running') and time.monotonic()<deadline:time.sleep(.02)
                     except Exception:os.kill(started['pid'],15)
                 app.close()
 
