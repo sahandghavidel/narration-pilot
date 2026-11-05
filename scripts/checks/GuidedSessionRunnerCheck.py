@@ -36,6 +36,9 @@ class App:
         self.context = dict(audioVersionID=self.audio, audioSHA256='fixture-hash', duration=.35,
                             words=[dict(word='One', start=0, end=.1), dict(word='Equals', start=.12, end=.2)])
         write(root/'context.json', self.context)
+        previous = root/'Runtime/approved-audio-recording.json'
+        write(previous, dict(busy=False, phase='completed', elapsedSeconds=0))
+        os.utime(previous, (time.time()-86400, time.time()-86400))
         self.capture, self.take, self.started, self.mode = 'paused', uid(), 0, None
         self.starting_text = '0'
         self.practice_finishes, self.record_starts, self.errors = 0, 0, []
@@ -95,7 +98,8 @@ class App:
                 write(self.root/'GuidedNarrationReview/status.json',dict(common,**self.guide))
                 write(base/'status.json',dict(common,**self.state))
                 write(self.root/'AgentFeedback/status.json',dict(common,focuSee=dict(observedState=self.capture,observedAt=now())))
-                write(self.root/'Runtime/approved-audio-recording.json',dict(common,busy=self.mode=='record',phase='playing' if self.mode=='record' else 'completed',elapsedSeconds=min(.35,max(0,elapsed)),audioVersionID=self.audio))
+                if self.mode=='record':
+                    write(self.root/'Runtime/approved-audio-recording.json',dict(common,busy=self.mode=='record',phase='playing' if self.mode=='record' else 'completed',elapsedSeconds=min(.35,max(0,elapsed)),audioVersionID=self.audio))
             except Exception as error:
                 self.errors.append(str(error));break
             time.sleep(.01)

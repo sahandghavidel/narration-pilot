@@ -95,7 +95,7 @@ async function execute(run,mode,plan){
  const until=Date.now()+15000;let started=false;
  while(Date.now()<until){const p=valid(run),f=feedback();if(['blocked','suspended','inactive'].includes(p.phase))throw Error('Workflow interrupted');
   if(mode==='practice'&&p.phase==='practicing'&&p.elapsed>0&&f.focuSee.observedState==='paused'){started=true;break}
-  if(mode==='record'){const r=fresh(path.join(appRoot,'Runtime/approved-audio-recording.json'));if(p.phase==='recording'&&r.busy&&r.phase==='playing'&&r.elapsedSeconds>0&&sameID(r.audioVersionID,plan.audioVersionID)&&f.focuSee.observedState==='recording'&&Date.now()-Date.parse(f.focuSee.observedAt)<1800){started=true;break}}
+  if(mode==='record'&&p.phase==='recording'){const file=path.join(appRoot,'Runtime/approved-audio-recording.json');if(!fs.existsSync(file)||Date.now()-fs.statSync(file).mtimeMs>4000){await sleep(10);continue}const r=fresh(file);if(r.busy&&r.phase==='playing'&&r.elapsedSeconds>0&&sameID(r.audioVersionID,plan.audioVersionID)&&f.focuSee.observedState==='recording'&&Date.now()-Date.parse(f.focuSee.observedAt)<1800){started=true;break}}
   await sleep(10);
  }
  if(!started)throw Error('Playback/recording start was not observed');
