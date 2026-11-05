@@ -132,15 +132,33 @@ async function runRecord(p){
  const until=Date.now()+45000;while(Date.now()<until){const state=valid(run);if(state.phase==='completed')break;if(['blocked','suspended'].includes(state.phase))throw Error(state.message);await sleep(25)}
  if(valid(run).phase!=='completed')throw Error('Recording completion was not received');
  const pauseUntil=Date.now()+3000;while(Date.now()<pauseUntil&&feedback().focuSee.observedState!=='paused')await sleep(25);paused();
- const ending=await observe();assertSnapshot(ending,scene.lastActionEnding);
- const shots=await images(`${run}-ending`);assertSnapshot(await observe(),ending);
+ // Navigation can finish after the last click. Capture the settled, paused
+ // screen for the next scene instead of requiring the loading frame to persist.
+ let ending,shots;
+ const settleUntil=Date.now()+5000;
+ for(;;){
+  valid(run);paused();
+  ending=await observe();
+  shots=await images(`${run}-ending`);
+  await sleep(100);
+  if(stable(await observe())===stable(ending))break;
+  if(Date.now()>=settleUntil)throw Error('The ending screen is still changing after pause.');
+ }
+ valid(run);paused();
  const file=path.join(scene.dir,'ending-checkpoint.json');atomic(file,{checkpointID:randomUUID(),snapshot:ending,cursor:ending.cursor,images:shots,operationalOnly:true,footageNeedsReview:true,recordingResult:valid(run).recordingResult});
- scene.complete=true;publish({phase:'sceneComplete',message:'Scene recorded; saved footage still needs normal review.',endingCheckpoint:file});emit('sceneComplete',{sessionID:scene.config.sessionID,endingCheckpoint:file});
  const review=guide();
  if(review.remainingChapterScenes && sameID(review.draft?.sessionID,scene.config.sessionID)){
-  const id=randomUUID();
-  atomic(path.join(appRoot,'GuidedNarrationReview/commands',id+'.json'),{schemaVersion:1,id,createdAt:utc(),sessionID:scene.config.sessionID,kind:'chapterTakeCompleted'});
+  const id=randomUUID(),root=path.join(appRoot,'GuidedNarrationReview');
+  atomic(path.join(root,'commands',id+'.json'),{schemaVersion:1,id,createdAt:utc(),sessionID:scene.config.sessionID,kind:'chapterTakeCompleted'});
+  const receipt=path.join(root,'receipts',id+'.json'),deadline=Date.now()+15000;
+  while(!fs.existsSync(receipt)){
+   if(Date.now()>=deadline)throw Error('Next-scene handoff timed out. Check the guided review before retrying.');
+   await sleep(25);
+  }
+  const response=read(receipt);
+  if(!response.accepted)throw Error('Next-scene handoff failed: '+response.message);
  }
+ scene.complete=true;publish({phase:'sceneComplete',message:'Scene recorded; saved footage still needs normal review.',endingCheckpoint:file});emit('sceneComplete',{sessionID:scene.config.sessionID,endingCheckpoint:file});
 }
 async function prepare(config){
  if(job)throw Error('Runner is busy');if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(config.sessionID??''))throw Error('Scene sessionID must be a UUID');if(!config.sessionID||!config.startingApp||!config.observeApps?.includes(config.startingApp)||!config.actions?.length)throw Error('Scene needs sessionID, startingApp, observeApps and actions');

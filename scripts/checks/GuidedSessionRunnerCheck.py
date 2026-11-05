@@ -42,7 +42,9 @@ class App:
         self.capture, self.take, self.started, self.mode = 'paused', uid(), 0, None
         self.starting_text = '0'
         self.practice_finishes, self.record_starts, self.errors = 0, 0, []
+        self.chapter_handoffs = 0
         self.done = False
+        (root/'GuidedNarrationReview/commands').mkdir(parents=True)
         (root/'GuidedNarrationReview/Practice/commands').mkdir(parents=True)
         (root/'GuidedNarrationReview/Practice/receipts').mkdir()
         self.thread = threading.Thread(target=self.loop)
@@ -58,6 +60,14 @@ class App:
         base = self.root/'GuidedNarrationReview/Practice'
         while not self.done:
             try:
+                for path in (base.parent/'commands').glob('*.json'):
+                    receipt = base.parent/'receipts'/path.name
+                    if receipt.exists(): continue
+                    cmd = json.loads(path.read_text())
+                    assert cmd['kind'] == 'chapterTakeCompleted' and cmd['sessionID'] == self.sid
+                    assert self.state['phase'] == 'completed' and self.capture == 'paused'
+                    self.chapter_handoffs += 1
+                    write(receipt, dict(accepted=True))
                 for path in (base/'commands').glob('*.json'):
                     receipt = base/'receipts'/path.name
                     if receipt.exists(): continue
@@ -93,6 +103,9 @@ class App:
                         else:
                             self.state.update(phase='completed',recordingResult=dict(sessionID=self.take,duration=.35))
                             self.capture='paused'
+                            if 'remainingChapterScenes' in self.guide:
+                                # Navigation finishes after the runner observed the last action.
+                                (self.root/'result-loaded').touch()
                         self.mode=None
                 common=dict(appRunning=True,pid=os.getpid(),updatedAt=now())
                 write(self.root/'GuidedNarrationReview/status.json',dict(common,**self.guide))
@@ -146,6 +159,8 @@ class RunnerCheck(unittest.TestCase):
                         app.guide=dict(active=True,phase='reading',draft=dict(sessionID=app.sid,revision=2))
                         improvement_handled=True
                     elif state['phase']=='prepared' and improvement_handled and not launched:
+                        if second_scene and reappear:
+                            app.guide['remainingChapterScenes'] = []
                         app.request();launched=True
                     if state['phase']=='needsAgent' and state.get('reason')!='narrationImprovement':
                         self.assertTrue(bad,(state,app.errors))
@@ -165,6 +180,9 @@ class RunnerCheck(unittest.TestCase):
                             cli('prepare','--scene-file',str(scene))
                             launched=False;improvement_sent=False;improvement_handled=False;second_scene=True
                             continue
+                        if second_scene and reappear:
+                            self.assertEqual(app.chapter_handoffs, 1)
+                            self.assertIn('Settled result', json.dumps(ending['snapshot']))
                         self.assertEqual(app.practice_finishes,3 if second_scene else 2)
                         self.assertEqual(app.record_starts,2 if second_scene else 1)
                         break
