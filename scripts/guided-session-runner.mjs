@@ -241,7 +241,7 @@ async function saveEnding(){
   ending=await observe();
   shots=await images(`${run}-ending`);
   await sleep(100);
-  if(stable(await observe())===stable(ending))break;
+  if(stable(comparableSnapshot(await observe()))===stable(comparableSnapshot(ending)))break;
   if(Date.now()>=settleUntil)throw Error('The ending screen is still changing after pause.');
  }
  paused();
