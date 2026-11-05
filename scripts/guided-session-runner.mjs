@@ -8,11 +8,13 @@ import {randomUUID, createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {createRequire} from 'node:module';
 const exec = promisify(execFile), repo=path.resolve(import.meta.dirname,'..');
 const flags=Object.fromEntries(process.argv.slice(2).reduce((a,v,i,all)=>i%2===0?[...a,[v.replace(/^--/,''),all[i+1]]]:a,[]));
 const root=path.resolve(flags.directory??path.join(os.homedir(),'Library/Application Support/local.clipboardreadermac/GuidedSessionRunner'));
 const appRoot=path.resolve(flags['app-directory']??path.join(os.homedir(),'Library/Application Support/local.clipboardreadermac'));
-const sdk=await import(pathToFileURL(path.resolve(flags.sdk??'/Users/sahand/Documents/Codex/2026-10-31/youtube-to-tested-tutorial/work/agentcursor/dist/lib.js')).href);
+const sdkPath=path.resolve(flags.sdk??'/Users/sahand/Documents/Codex/2026-10-31/youtube-to-tested-tutorial/work/agentcursor/dist/lib.js');
+const sdk=await import(pathToFileURL(sdkPath).href);
 for(const d of ['','commands','receipts','events','scenes'])fs.mkdirSync(path.join(root,d),{recursive:true,mode:0o700});
 const read=p=>JSON.parse(fs.readFileSync(p,'utf8'));
 const atomic=(p,v)=>{const tmp=p+'.'+randomUUID()+'.tmp';fs.writeFileSync(tmp,JSON.stringify(v,null,2),{mode:0o600});fs.renameSync(tmp,p)};
@@ -71,8 +73,8 @@ function comparableSnapshot(snapshot){
 function assertSnapshot(current,baseline){if(stable(comparableSnapshot(current))!==stable(comparableSnapshot(baseline)))throw Error('Starting screen/cursor differs from the immutable checkpoint.');}
 function validateAction(a){
  if(a.systemOverlay && (!['move','click','highlight'].includes(a.verb)||![a.target?.x,a.target?.y].every(Number.isFinite)))throw Error('System overlays require a coordinate pointer action.');
- if(a.verb==='highlight' && ![a.target?.x,a.target?.y,a.end?.x,a.end?.y].every(Number.isFinite))throw Error('Highlight requires visible text start and end coordinates.');
- if(a.target?.x!==undefined&&(!Number.isFinite(a.target.x)||!Number.isFinite(a.target.y)))throw Error('Coordinate targets must be finite');if(!a.id||!['click','doubleClick','move','highlight','type','key','scroll','activate','hold'].includes(a.verb)||a.practiceSafe!==true)throw Error('Every action must have an ID, supported verb, and explicit practiceSafe:true.');if(a.verb==='type'&&a.submit)throw Error('Submit actions require separate agent handling; they cannot be rehearsed automatically.');}
+ if(['highlight','previewDrag'].includes(a.verb) && ![a.target?.x,a.target?.y,a.end?.x,a.end?.y].every(Number.isFinite))throw Error('Highlight requires visible text start and end coordinates.');
+ if(a.target?.x!==undefined&&(!Number.isFinite(a.target.x)||!Number.isFinite(a.target.y)))throw Error('Coordinate targets must be finite');if(!a.id||!['click','doubleClick','move','highlight','previewDrag','type','key','scroll','activate','hold'].includes(a.verb)||a.practiceSafe!==true)throw Error('Every action must have an ID, supported verb, and explicit practiceSafe:true.');if(a.verb==='type'&&a.submit)throw Error('Submit actions require separate agent handling; they cannot be rehearsed automatically.');}
 async function target(a){if(a.target?.x!==undefined)return a.target;if(!a.target?.name)throw Error('Action target is missing');const app=a.app??scene.config.startingApp;const v=await desktop.view({app,max:scene.config.maxElements??200});lastReadApp=app;const found=v.elements.filter(e=>e.name===a.target.name&&(!a.target.role||e.role===a.target.role));if(found.length!==1)throw Error('Target must match exactly one visible element: '+a.target.name);const e=found[0];return {x:e.rect.x+e.rect.width/2,y:e.rect.y+e.rect.height/2};}
 async function perform(a){
  if(a.verb==='activate'){await activate(a.app);return}
@@ -84,7 +86,7 @@ async function perform(a){
   return;
  }
  if(lastReadApp!==app){await desktop.view({app,max:scene.config.maxElements??200});lastReadApp=app;}
- if(['click','doubleClick','move','highlight'].includes(a.verb))await performPointer(desktop,a,scene.targets?.[a.id]??await target(a));
+ if(['click','doubleClick','move','highlight','previewDrag'].includes(a.verb))await performPointer(desktop,a,scene.targets?.[a.id]??await target(a));
  else if(a.verb==='type')await desktop.type(a.text,{submit:false});
  else if(a.verb==='key')await desktop.key(a.key);
  else if(a.verb==='scroll')await desktop.scroll({...a.scroll,style:'trackpad'});
@@ -93,6 +95,21 @@ async function performPointer(pointer,a,start){
  if(a.verb==='click')await pointer.click(start);
  else if(a.verb==='doubleClick')await pointer.dblclick(start);
  else if(a.verb==='move')await pointer.move(start);
+ else if(a.verb==='previewDrag'){
+  // Use AgentCursor's installed mouse backend to hold through Escape.
+  const backendPath=createRequire(sdkPath).resolve('@nut-tree-fork/nut-js');
+  const {mouse,Button}=await import(pathToFileURL(backendPath).href);
+  await pointer.move(start);
+  await mouse.pressButton(Button.LEFT);
+  try{
+   await sleep(150);
+   await pointer.move(a.end);
+   await pointer.key('escape');
+  }catch(error){
+   await pointer.move(start);
+   throw error;
+  }finally{await mouse.releaseButton(Button.LEFT)}
+ }
  else{
   await pointer.drag(start,a.end,{durationMs:350});
   await pointer.move({x:a.end.x+8,y:a.end.y+1});
