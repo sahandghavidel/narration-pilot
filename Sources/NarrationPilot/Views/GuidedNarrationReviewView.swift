@@ -47,31 +47,13 @@ private struct GuidedReviewActions: View {
 
     var showsImprovementOptions = false
     @State private var optionsFor: GuidedAction?
-    @State private var custom = false
-    @State private var instruction = ""
-    @FocusState private var editingInstruction: Bool
-
     private var actions: [GuidedAction] { GuidedAction.allCases.filter { $0.available(review, practice) } }
-
-    private func showOptions(_ action: GuidedAction?) {
-        editingInstruction = false
-        instruction = ""
-        custom = false
-        optionsFor = action
-    }
 
     private func submit(_ text: String, for action: GuidedAction) {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, action.available(review, practice) else { return }
-        showOptions(nil)
+        optionsFor = nil
         action.perform(review, practice, instruction: value)
-    }
-
-    private func presets(for action: GuidedAction) -> [String] {
-        if action == .improveWording {
-            return ["Make it shorter", "Add a little detail", "Make it sound like me", "Make it clearer for beginners"]
-        }
-        return ["Make the actions faster", "Make the actions slower", "Match the narration better", "Show the result longer"]
     }
 
     var body: some View {
@@ -87,7 +69,7 @@ private struct GuidedReviewActions: View {
                 ForEach(actions) { action in
                     HStack(spacing: 3) {
                         Button {
-                            showOptions(nil)
+                            optionsFor = nil
                             action.perform(review, practice)
                         } label: {
                             HStack {
@@ -99,7 +81,7 @@ private struct GuidedReviewActions: View {
                         }
                         if showsImprovementOptions && [.improveWording, .improvePractice].contains(action) {
                             Button {
-                                showOptions(optionsFor == action ? nil : action)
+                                optionsFor = optionsFor == action ? nil : action
                             } label: {
                                 Image(systemName: optionsFor == action ? "chevron.up" : "chevron.down")
                             }
@@ -110,31 +92,8 @@ private struct GuidedReviewActions: View {
                 }
             }
             if let action = optionsFor, actions.contains(action) {
-                if custom {
-                    Text(action == .improveWording ? "What should change in the wording?" : "What should change in the practice?")
-                        .font(.caption)
-                    TextEditor(text: $instruction)
-                        .frame(height: 60)
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(.secondary.opacity(0.3)))
-                        .focused($editingInstruction)
-                        .accessibilityLabel("Custom improvement instruction")
-                        .task {
-                            await Task.yield()
-                            editingInstruction = true
-                        }
-                    HStack {
-                        Button("Send instruction") { submit(instruction, for: action) }
-                            .disabled(instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        Button("Cancel") { showOptions(nil) }
-                    }
-                } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], alignment: .leading) {
-                        ForEach(presets(for: action), id: \.self) { preset in
-                            Button(preset) { submit(preset, for: action) }
-                        }
-                        Button("Give my own instruction…") { custom = true }
-                    }
-                }
+                GuidedImprovementOptions(action: action, submit: { submit($0, for: action) }, close: { optionsFor = nil })
+                    .id(action)
             }
             if showsImprovementOptions {
                 if review.phase == "improving", let request = review.decision?.instruction {
@@ -145,7 +104,7 @@ private struct GuidedReviewActions: View {
             }
         }
         .onChange(of: actions) {
-            if let action = optionsFor, !actions.contains(action) { showOptions(nil) }
+            if let action = optionsFor, !actions.contains(action) { optionsFor = nil }
         }
     }
 }
