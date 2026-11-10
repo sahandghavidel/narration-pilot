@@ -14,6 +14,7 @@ struct GuidedNarrationDecision: Codable, Equatable, Sendable {
     var kind: String
     var draft: GuidedNarrationDraft
     var createdAt: Date
+    var instruction: String?
 }
 
 struct GuidedNarrationCommand: Codable, Sendable {
@@ -303,9 +304,9 @@ final class GuidedNarrationReview: ObservableObject {
         return decision?.kind == "approveNarration"
     }
 
-    func improveWording() {
+    func improveWording(instruction: String? = nil) {
         guard canImproveWording else { return }
-        choose("improveNarration", fromAudio: decision != nil)
+        choose("improveNarration", fromAudio: decision != nil, instruction: instruction)
     }
 
     func startRestoredManualTake(_ approval: GuidedAudioDecision) {
@@ -313,11 +314,11 @@ final class GuidedNarrationReview: ObservableObject {
         startManualTake(approval)
     }
 
-    private func choose(_ kind: String, fromAudio: Bool = false) {
+    private func choose(_ kind: String, fromAudio: Bool = false, instruction: String? = nil) {
         guard active, let draft else { return }
         let revisingVoice = fromAudio && kind == "improveNarration" && decision?.kind == "approveNarration" && audioDecision == nil
         guard revisingVoice || (decision == nil && ["reading", "awaitingDecision"].contains(phase)) else { return }
-        let event = GuidedNarrationDecision(id: UUID(), kind: kind, draft: draft, createdAt: Date())
+        let event = GuidedNarrationDecision(id: UUID(), kind: kind, draft: draft, createdAt: Date(), instruction: instruction)
         do {
             // One immutable event file per revision is authoritative across crashes.
             let url = revisingVoice ? voiceImprovementURL(draft) : eventURL(draft)

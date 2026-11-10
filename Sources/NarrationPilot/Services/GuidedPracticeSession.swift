@@ -65,6 +65,7 @@ struct GuidedPracticeEvent: Codable, Sendable {
     var contextPath: String
     var planID: UUID?
     var checkpointID: UUID?
+    var instruction: String?
     var createdAt: Date
 }
 
@@ -237,10 +238,10 @@ final class GuidedPracticeSession: ObservableObject {
         return true
     }
 
-    @discardableResult func redo() -> Bool {
+    @discardableResult func redo(instruction: String? = nil) -> Bool {
         guard active else { return false }
         guard ["practiceReady", "practicing", "waitingForActions", "waitingForRecordActions", "recordRequested", "blocked", "suspended"].contains(phase) else { return true }
-        requestPractice()
+        requestPractice(instruction: instruction)
         return true
     }
 
@@ -294,7 +295,7 @@ final class GuidedPracticeSession: ObservableObject {
         if phase == "recording" { cancelRecording(pauseRecording) }
     }
 
-    private func requestPractice() {
+    private func requestPractice(instruction: String? = nil) {
         guard let approval else { return }
         cancelWork(pauseRecording: true)
         runID = UUID(); attempt += 1; plan = nil; pendingEvent = nil; eventAcknowledged = false
@@ -313,7 +314,7 @@ final class GuidedPracticeSession: ObservableObject {
                 self.assets = assets
                 self.duration = assets.context.duration
                 try self.write(assets.context, to: self.contextURL(assets.context.audioVersionID))
-                try self.emit("practiceRequested")
+                try self.emit("practiceRequested", instruction: instruction)
                 self.phase = "practiceRequested"; self.message = "Waiting for the agent to plan actions from the word timings and restore the starting screen."
                 self.worker = nil; self.publish()
             } catch {
@@ -447,11 +448,11 @@ final class GuidedPracticeSession: ObservableObject {
         }
     }
 
-    private func emit(_ kind: String) throws {
+    private func emit(_ kind: String, instruction: String? = nil) throws {
         guard let approval, let runID, let id = approval.audio.versionID, let contextPath else { throw error("Practice context is unavailable.") }
         let event = GuidedPracticeEvent(id: UUID(), kind: kind, sessionID: approval.draft.sessionID, runID: runID,
             attempt: attempt, audioVersionID: id, contextPath: contextPath, planID: plan?.id,
-            checkpointID: baselineCheckpointID, createdAt: Date())
+            checkpointID: baselineCheckpointID, instruction: instruction, createdAt: Date())
         try write(event, to: directory.appendingPathComponent("events/\(event.id.uuidString.lowercased()).json"))
         pendingEvent = event; eventAcknowledged = false
     }

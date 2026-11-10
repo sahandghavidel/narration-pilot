@@ -121,8 +121,9 @@ import Foundation
         // G can interrupt the ready announcement and repeat without waiting for it.
         // A prep announcement failing must never swallow an improvement request.
         practice.prompt = { text in !text.hasPrefix("Preparing improved practice") }
-        practice.redo()
+        practice.redo(instruction: "Match the narration better")
         try await waitFor { practice.phase == "practiceRequested" }
+        precondition(practice.pendingEvent?.instruction == "Match the narration better")
         precondition(practice.runID != firstRun && loads == 1 && practice.attempt == 2)
         _ = try await send("start", run: firstRun, gate: gate, accepted: false)
         bad = plan; bad.checkpointID = UUID()
@@ -191,7 +192,8 @@ import Foundation
         press(.approveWording)
         try await waitFor { previewWaiter != nil }
         let discarded = review.audioReview!.versionID!
-        press(.improveWording)
+        GuidedAction.improveWording.perform(review, practice, instruction: "Keep the first sentence and shorten the ending.")
+        precondition(review.decision?.instruction == "Keep the first sentence and shorten the ending.")
         precondition(review.phase == "improving" && stoppedVersions.contains(discarded))
         precondition(review.audioReview?.versionID == nil && review.audioDecision == nil)
         let restoredEdit = GuidedNarrationReview(directory: review.directory)
@@ -215,6 +217,8 @@ import Foundation
         precondition(finalVersion != revisedVersion)
         press(.startPractice)
         try await waitFor { practice.phase == "practiceRequested" }
+        precondition(practice.pendingEvent?.instruction == nil)
+        press(.improvePractice) // Currently preparing; a duplicate request is ignored.
         var handoffPlan = plan; handoffPlan.audioVersionID = finalVersion
         _ = try await send("plan", plan: handoffPlan)
         gate.verifiedAt = Date()

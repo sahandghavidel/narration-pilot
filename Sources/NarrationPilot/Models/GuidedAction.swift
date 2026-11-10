@@ -53,11 +53,11 @@ enum GuidedAction: String, CaseIterable, Identifiable {
         }
     }
 
-    @MainActor func perform(_ review: GuidedNarrationReview, _ practice: GuidedPracticeSession) {
+    @MainActor func perform(_ review: GuidedNarrationReview, _ practice: GuidedPracticeSession, instruction: String? = nil) {
         guard available(review, practice) else { return }
         switch self {
         case .replayNarration: Task { await review.replay() }
-        case .improveWording: review.improveWording()
+        case .improveWording: review.improveWording(instruction: instruction)
         case .approveWording: review.approveWording()
         case .replayVoice: review.replayAudio()
         case .regenerateVoice: review.generateAudio(forceNewVersion: true)
@@ -65,7 +65,7 @@ enum GuidedAction: String, CaseIterable, Identifiable {
             if let approval = review.audioDecision { practice.begin(approval) }
             else { review.startAgentPractice() }
         case .replayPractice: practice.replayPractice()
-        case .improvePractice: practice.redo()
+        case .improvePractice: practice.redo(instruction: instruction)
         case .agentRecord: practice.approve()
         case .manual:
             if practice.phase == "practiceReady" { practice.requestManualRestore() }

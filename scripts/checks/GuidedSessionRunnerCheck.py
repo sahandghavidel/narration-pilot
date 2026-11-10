@@ -112,7 +112,9 @@ class App:
                                 self.state.update(plan=plan, pendingEvent=dict(id=uid(),kind='practiceReplayRequested'))
                             elif self.manual:
                                 self.state.update(phase='manualRestoreRequested',pendingEvent=dict(id=uid(),kind='manualRestoreRequested'))
-                            elif self.practice_finishes==1:self.request() # Fixture user's G.
+                            elif self.practice_finishes==1:
+                                self.request()
+                                self.state['pendingEvent']['instruction'] = "Pause over Equals before clicking."
                             else:self.state.update(phase='recordRequested',pendingEvent=dict(id=uid(),kind='recordRequested')) # Fixture user's A.
                         else:
                             self.state.update(phase='completed',recordingResult=dict(sessionID=self.take,duration=.35))
@@ -180,6 +182,7 @@ class RunnerCheck(unittest.TestCase):
                         app.request();launched=True
                     if state['phase']=='needsAgent' and state.get('reason')=='practiceImprovement':
                         self.assertEqual(app.practice_finishes, 1)
+                        self.assertEqual(state['lastEvent']['instruction'], 'Pause over Equals before clicking.')
                         run_id = state['lastEvent']['runID']
                         for rejected_id in [uid(), run_id]:
                             r = subprocess.run(['python3',str(CLI),'--directory',str(worker),'update','--scene-file',str(scene),'--run-id',rejected_id],env=env,capture_output=True)

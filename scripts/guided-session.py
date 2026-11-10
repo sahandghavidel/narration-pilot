@@ -57,7 +57,8 @@ def listen_for_chapter_request(review_root):
             if review.get('appRunning') and review.get('active') and review.get('remainingChapterScenes') is not None:
                 decision = review.get('decision') or {}
                 if review['phase'] == 'improving' and decision.get('draft') == draft:
-                    return dict(request='revise', draft=draft, eventID=decision['id'])
+                    return dict(request='revise', draft=draft, eventID=decision['id'],
+                                **({'instruction': decision['instruction']} if decision.get('instruction') else {}))
                 practice_file = review_root / 'Practice/status.json'
                 if review['phase'] == 'audioApproved' and practice_file.exists() and time.time() - practice_file.stat().st_mtime < 4:
                     practice = load(practice_file)
@@ -78,7 +79,9 @@ def listen_for_chapter_request(review_root):
                             and (practice.get('pendingEvent') or {}).get('kind') != 'practiceReplayRequested'
                             and approval.get('draft') == draft
                             and approval.get('id') == (review.get('audioDecision') or {}).get('id')):
-                        return dict(request='improvePractice' if practice.get('attempt', 1) > 1 else 'practice', draft=draft, runID=practice['runID'])
+                        instruction = (practice.get('pendingEvent') or {}).get('instruction')
+                        return dict(request='improvePractice' if practice.get('attempt', 1) > 1 else 'practice', draft=draft, runID=practice['runID'],
+                                    **({'instruction': instruction} if instruction else {}))
         time.sleep(.25)
 
 

@@ -3611,8 +3611,10 @@ final class AppModel: ObservableObject {
         }
         guidedNarrationReview.practiceSummary = { [weak self] in
             guard let self, self.guidedPractice.active else { return nil }
-            return ["phase": self.guidedPractice.phase, "runID": self.guidedPractice.runID?.uuidString ?? "",
-                    "message": self.guidedPractice.message]
+            var summary = ["phase": self.guidedPractice.phase, "runID": self.guidedPractice.runID?.uuidString ?? "",
+                           "message": self.guidedPractice.message]
+            summary["instruction"] = self.guidedPractice.pendingEvent?.instruction
+            return summary
         }
         if !guidedNarrationReview.active { guidedPractice.end() }
         guidedPractice.start()
