@@ -69,15 +69,15 @@ def main():
     context.add_argument('--run-id', required=True)
     watch = commands.add_parser('watch')
     watch.add_argument('--session-id', required=True)
-    watch.add_argument('--kind', choices=['practiceRequested', 'recordRequested', 'recordingCompleted'], required=True)
+    watch.add_argument('--kind', choices=['practiceRequested', 'recordRequested', 'practiceReplayRequested', 'manualRestoreRequested', 'recordingCompleted'], required=True)
     watch.add_argument('--after-event-id')
     watch.add_argument('--ack', action='store_true')
     watch.add_argument('--timeout', type=float, default=55)
-    for name in ['plan', 'start', 'finish', 'record', 'record-finish', 'abort']:
+    for name in ['plan', 'start', 'finish', 'record', 'manual-ready', 'record-finish', 'abort']:
         cmd = commands.add_parser(name)
         cmd.add_argument('--run-id', required=True)
         if name == 'plan': cmd.add_argument('--plan-file', type=Path, required=True)
-        if name in ['start', 'record']: cmd.add_argument('--gate-file', type=Path, required=True)
+        if name in ['start', 'record', 'manual-ready']: cmd.add_argument('--gate-file', type=Path, required=True)
         if name in ['finish', 'record-finish']: cmd.add_argument('--results-file', type=Path, required=True)
     args = parser.parse_args()
     root = args.directory
@@ -94,7 +94,7 @@ def main():
     elif args.command == 'watch':
         if not 0 < args.timeout <= 60: raise RuntimeError('Use a bounded watch of at most 60 seconds')
         deadline = time.monotonic() + args.timeout
-        expected_phase = 'completed' if args.kind == 'recordingCompleted' else args.kind
+        expected_phase = {'recordingCompleted': 'completed', 'practiceReplayRequested': 'practiceRequested'}.get(args.kind, args.kind)
         while True:
             state = live(root, session_id=args.session_id)
             event = state.get('pendingEvent') or {}
@@ -120,7 +120,7 @@ def main():
             plan.setdefault('audioVersionID', context['audioVersionID'])
             plan.setdefault('audioSHA256', context['audioSHA256'])
             payload['plan'] = plan
-        if args.command in ['start', 'record']:
+        if args.command in ['start', 'record', 'manual-ready']:
             # A/G notifications are spoken outside playback/capture. Wait for
             # that real transition, then submit the already verified gate.
             deadline = time.monotonic() + 10
@@ -131,7 +131,7 @@ def main():
             payload['gate'] = load(args.gate_file)
         if args.command in ['finish', 'record-finish']:
             payload['results'] = load(args.results_file)
-        kind = 'recordFinish' if args.command == 'record-finish' else args.command
+        kind = {'record-finish': 'recordFinish', 'manual-ready': 'manualReady'}.get(args.command, args.command)
         result = send(root, args.run_id, kind, **payload)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

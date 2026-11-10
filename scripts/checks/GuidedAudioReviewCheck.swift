@@ -113,6 +113,60 @@ struct GuidedAudioReviewCheck {
         review.approve(); precondition(review.audioDecision == nil)
         review.end()
 
+        // Model the missing speech callback after the voice file has been saved.
+        var missingCue: UUID?
+        var retryDraft = draft
+        retryDraft.sessionID = UUID()
+        review.speak = { text, token in
+            if text == "Review audio." { missingCue = token }
+            else { review.speechFinished(token) }
+        }
+        review.previewAudio = { audio, _ in previews.append(audio.versionID) }
+        try await send("submit", draft: retryDraft)
+        review.approveWording()
+        try await waitFor { missingCue != nil }
+        let saved = review.audioReview!.versionID!
+        let firstCue = missingCue!
+        precondition(review.audioBusy && review.phase == "audioPreparing")
+        let requestsBeforeReplay = prepared.count
+        review.replayAudio()
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        review.speechFinished(firstCue)
+        precondition(previews.last == saved && prepared.count == requestsBeforeReplay)
+
+        missingCue = nil
+        review.generateAudio(forceNewVersion: true)
+        try await waitFor { missingCue != nil }
+        let supersededCue = missingCue!
+        missingCue = nil
+        review.generateAudio(forceNewVersion: true)
+        try await waitFor { missingCue != nil }
+        review.speechFinished(supersededCue)
+        precondition(review.audioBusy)
+        for _ in 0..<100 {
+            if !review.audioBusy { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        precondition(review.phase == "audioReady" && !review.audioBusy && review.audioReview?.attempt == 3)
+        review.speak = { _, token in review.speechFinished(token) }
+
+        // A backend which returns after cancellation must not replace the newer take.
+        let retryVersion = UUID(), staleVersion = UUID()
+        var lateRequest: CheckedContinuation<GuidedPreparedAudio, Never>?
+        review.prepareAudio = { _, _, _, _ in
+            if lateRequest == nil { return await withCheckedContinuation { lateRequest = $0 } }
+            return GuidedPreparedAudio(versionID: retryVersion, duration: 2)
+        }
+        review.generateAudio(forceNewVersion: true)
+        try await waitFor { lateRequest != nil }
+        review.generateAudio(forceNewVersion: true)
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        lateRequest?.resume(returning: GuidedPreparedAudio(versionID: staleVersion, duration: 2))
+        try await Task.sleep(for: .milliseconds(20))
+        precondition(review.audioReview?.versionID == retryVersion && !previews.contains(staleVersion))
+        review.end()
+        print("PASS: direct replay during a stuck cue, bounded automatic preview and regeneration superseding a late response")
+
         // Ending a review while its generation is in flight suppresses late playback.
         var pending: CheckedContinuation<GuidedPreparedAudio, Never>?
         review.prepareAudio = { _, _, _, _ in await withCheckedContinuation { pending = $0 } }

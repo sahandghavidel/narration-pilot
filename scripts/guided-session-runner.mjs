@@ -223,20 +223,28 @@ function priorPractice(sessionID){
 }
 async function runPractice(p){
  const run=p.runID;publish({phase:'preparingPractice',message:'Resolving saved word cues and restoring the start.'});
- const context=read(p.contextPath),plan=resolvePlan(context);scene.plan=plan;scene.boundRun=run;scene.boundConfigHash=hash(scene.config.actions);
- await appCommand('acknowledge',{eventID:p.pendingEvent.id});await appCommand('plan',{plan});
+ const replay=p.pendingEvent?.kind==='practiceReplayRequested';
+ if(replay && (!sameID(p.plan?.id,scene.plan?.id)||hash(scene.config.actions)!==scene.boundConfigHash))throw Error('The rehearsal changed; request an improved practice.');
+ const plan=replay?scene.plan:resolvePlan(read(p.contextPath));scene.plan=plan;scene.boundRun=run;scene.boundConfigHash=hash(scene.config.actions);
+ await appCommand('acknowledge',{eventID:p.pendingEvent.id});if(!replay)await appCommand('plan',{plan});
  const gate=await restore(run,`${run}-practice`);valid(run);
  await connect();await desktop.view({app:scene.config.startingApp,max:scene.config.maxElements??200});lastReadApp=scene.config.startingApp;
  publish({phase:'practicing',message:'Prepared actions follow the approved audio clock.'});
  atomic(practicedPath(scene.config.sessionID),{runID:run,signature:actionSignature(scene.config.actions),actions:scene.config.actions});
  const action=execute(run,'practice',plan);action.catch(()=>{});
  try{await appCommand('start',{gate});await action}catch(error){throw error}
- publish({phase:'waitingForApproval',message:'Practice finished. Waiting for the real user’s A/G decision.'});
+ publish({phase:'waitingForApproval',message:'Practice finished. Waiting for the user’s next decision.'});
 }
 async function runRecord(p){
  const run=p.runID;if(!sameID(run,scene.boundRun)||!sameID(p.plan?.id,scene.plan?.id)||hash(scene.config.actions)!==scene.boundConfigHash)throw Error('Recording plan differs from the practiced plan');
  await appCommand('acknowledge',{eventID:p.pendingEvent.id});publish({phase:'preparingRecording',message:'Restoring the practiced starting checkpoint.'});
- const gate=await restore(run,`${run}-record`);valid(run);
+ const manual=p.phase==='manualRestoreRequested';
+ const gate=await restore(run,`${run}-${manual?'manual':'record'}`);valid(run);
+ if(manual){
+  await appCommand('manualReady',{gate});
+  publish({phase:'prepared',message:'Starting screen restored. Waiting for the user to record manually.'});
+  return;
+ }
  while(valid(run).promptBusy)await sleep(20);
  await connect();await desktop.view({app:scene.config.startingApp,max:scene.config.maxElements??200});lastReadApp=scene.config.startingApp;
  const action=execute(run,'record',scene.plan);action.catch(()=>{});publish({phase:'recording',message:'Executing the same practiced action plan.'});
@@ -293,7 +301,7 @@ async function prepare(config){
  if(p.active&&!['completed','inactive'].includes(p.phase)&&!requestedPractice)throw Error('Finish/end the current guided scene before preparing another');
  const previous=priorPractice(config.sessionID);
  if(requestedPractice && previous && !sameID(previous.runID,p.runID)){
-  if(actionSignature(config.actions)===previous.signature)throw Error('G requested improved practice. Revise the screen actions or their timing.');
+  if(actionSignature(config.actions)===previous.signature)throw Error('The user requested improved practice. Revise the screen actions or their timing.');
   config.baselinePath=path.join(root,'scenes',config.sessionID,'baseline.json');
  }
  paused();scene={config,dir:path.join(root,'scenes',config.sessionID),complete:false};fs.mkdirSync(scene.dir,{recursive:true,mode:0o700});atomic(path.join(scene.dir,'scene.json'),config);
@@ -321,6 +329,7 @@ async function commands(){
     if(new Set(c.scene.actions.map(a=>a.id)).size!==c.scene.actions.length)throw Error('Action IDs must be unique.');
     if(!wordReview && !sameID(p.approval?.draft?.sessionID,scene.config.sessionID))throw Error('The active practice belongs to another scene.');
     const previous=priorPractice(scene.config.sessionID);
+    if(p.phase==='practiceRequested' && p.pendingEvent?.kind==='practiceReplayRequested')throw Error('Replay uses the existing practiced actions.');
     if(p.phase==='practiceRequested' && previous && !sameID(previous.runID,p.runID)){
      if(!sameID(c.runID,p.runID))throw Error('Use the current practice request run ID.');
      if(actionSignature(c.scene.actions)===previous.signature)throw Error('Change the demonstrated actions or timing before practicing again.');
@@ -371,12 +380,12 @@ try{while(!stopped){
     const p=practice();if(sameID(p.approval?.draft?.sessionID,scene.config.sessionID)){
      if(p.phase==='practiceRequested'&&!sameID(scene.boundRun,p.runID)){
       const prior=priorPractice(scene.config.sessionID);
-      if(prior && !sameID(prior.runID,p.runID) && prior.signature===actionSignature(scene.config.actions)){
-       publish({phase:'needsAgent',reason:'practiceImprovement',message:'G requested improved screen actions. Update this practice before running it.'});
+      if(p.pendingEvent?.kind!=='practiceReplayRequested' && prior && !sameID(prior.runID,p.runID) && prior.signature===actionSignature(scene.config.actions)){
+       publish({phase:'needsAgent',reason:'practiceImprovement',message:'The user requested improved screen actions. Update this practice before running it.'});
        emit('practiceImprovementRequested',{sessionID:scene.config.sessionID,sceneID:scene.config.sceneID,runID:p.runID});
       }else launch(()=>runPractice(p));
      }
-     else if(p.phase==='recordRequested')launch(()=>runRecord(p));
+     else if(['recordRequested','manualRestoreRequested'].includes(p.phase))launch(()=>runRecord(p));
     }
    }
   }catch(error){attention(error.message)}

@@ -3498,6 +3498,7 @@ final class AppModel: ObservableObject {
             // Approval persists synchronously; Tiny.en timings fill in separately.
             try self.clonedClipboardAudio.approveGuidedAudio(takeID: id, narration: narration, voiceID: voiceID)
         }
+        guidedNarrationReview.cancelAudioPreparation = { [weak self] in self?.clonedClipboardAudio.cancelGuidedPreparation() }
         guidedNarrationReview.stopAudioPreview = { [weak self] id in self?.clonedClipboardAudio.stopGuidedPreview(takeID: id) }
         guidedPractice.loadAssets = { [weak self] approval in
             guard let self, let id = approval.audio.versionID else { throw CancellationError() }
@@ -3877,12 +3878,7 @@ final class AppModel: ObservableObject {
     func recoverAfterSessionResume() {
         guidedNarrationReview.interruptSpeech()
         approvedAudioRecording.cancel()
-        KeyboardShortcuts.disable(.recordApprovedClipboardAudio)
-        KeyboardShortcuts.enable(.recordApprovedClipboardAudio)
-        KeyboardShortcuts.disable(.approveClonedClipboardAudio)
-        KeyboardShortcuts.enable(.approveClonedClipboardAudio)
-        KeyboardShortcuts.disable(.regenerateClonedClipboardAudio)
-        KeyboardShortcuts.enable(.regenerateClonedClipboardAudio)
+        refreshGuidedShortcuts(force: true)
         KeyboardShortcuts.disable(.generateClonedClipboardAudio)
         KeyboardShortcuts.enable(.generateClonedClipboardAudio)
         mouseShortcutService?.stop()
@@ -3956,38 +3952,56 @@ final class AppModel: ObservableObject {
         mouseShortcutService?.start()
     }
 
-    private func registerShortcutHandlers() {
-        let manualShortcuts: [KeyboardShortcuts.Name] = [.recordGuidedManually, .recordGuidedManuallyAlternate]
-        for name in manualShortcuts {
-            KeyboardShortcuts.onKeyUp(for: name) { [weak self] in
-                Task { @MainActor in self?.guidedNarrationReview.recordMyself() }
+    private var enabledGuidedActions: Set<GuidedAction> = []
+
+    func refreshGuidedShortcuts(force: Bool = false) {
+        for action in GuidedAction.allCases {
+            let standalone = !guidedNarrationReview.active && [.approveWording, .regenerateVoice].contains(action)
+            let enabled = standalone || action.available(guidedNarrationReview, guidedPractice)
+            if force || enabled != enabledGuidedActions.contains(action) {
+                if enabled {
+                    KeyboardShortcuts.enable(action.shortcut)
+                    enabledGuidedActions.insert(action)
+                } else {
+                    KeyboardShortcuts.disable(action.shortcut)
+                    enabledGuidedActions.remove(action)
+                }
             }
+        }
+    }
+
+    private func registerShortcutHandlers() {
+        if KeyboardShortcuts.Name.recordApprovedClipboardAudio.shortcut == .init(.r, modifiers: [.command, .shift]) {
+            KeyboardShortcuts.setShortcut(nil, for: .recordApprovedClipboardAudio)
         }
         KeyboardShortcuts.onKeyUp(for: .recordApprovedClipboardAudio) { [weak self] in
             Task { @MainActor in self?.recordApprovedClipboardAudio() }
         }
-        guidedNarrationReview.$phase.sink { phase in
-            for name in manualShortcuts {
-                if ["audioReady", "manualRetry"].contains(phase) { KeyboardShortcuts.enable(name) }
-                else { KeyboardShortcuts.disable(name) }
+        for action in GuidedAction.allCases {
+            KeyboardShortcuts.onKeyUp(for: action.shortcut) { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if self.guidedNarrationReview.active {
+                        action.perform(self.guidedNarrationReview, self.guidedPractice)
+                    } else {
+                        switch action {
+                        case .approveWording: self.clonedClipboardAudio.approvePreviewedClipboard()
+                        case .regenerateVoice: self.clonedClipboardAudio.generateClipboard(forceNewVersion: true)
+                        default: break
+                        }
+                    }
+                }
             }
-        }.store(in: &cancellables)
+        }
+        refreshGuidedShortcuts(force: true)
+        guidedNarrationReview.objectWillChange.merge(with: guidedPractice.objectWillChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.refreshGuidedShortcuts() }
+            .store(in: &cancellables)
         KeyboardShortcuts.onKeyUp(for: .generateClonedClipboardAudio) { [weak self] in
             Task { @MainActor in
                 guard let self, !self.guidedNarrationReview.active else { return }
                 self.clonedClipboardAudio.generateClipboard()
-            }
-        }
-        KeyboardShortcuts.onKeyUp(for: .approveClonedClipboardAudio) { [weak self] in
-            Task { @MainActor in
-                guard let self else { return }
-                if !self.guidedNarrationReview.approve() { self.clonedClipboardAudio.approvePreviewedClipboard() }
-            }
-        }
-        KeyboardShortcuts.onKeyUp(for: .regenerateClonedClipboardAudio) { [weak self] in
-            Task { @MainActor in
-                guard let self else { return }
-                if !self.guidedNarrationReview.improve() { self.clonedClipboardAudio.generateClipboard(forceNewVersion: true) }
             }
         }
         KeyboardShortcuts.onKeyUp(for: .copyCurrentSceneForAgent) { [weak self] in

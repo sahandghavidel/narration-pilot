@@ -163,7 +163,11 @@ final class GuidedNarrationReview: ObservableObject {
                 pendingEndingSessionID = saved.pendingEndingSessionID
                 audioReview = saved.audioReview
                 if let draft, active {
-                    decision = try? Self.decoder().decode(GuidedNarrationDecision.self, from: Data(contentsOf: eventURL(draft)))
+                    let latestEvent = FileManager.default.fileExists(atPath: voiceImprovementURL(draft).path) ? voiceImprovementURL(draft) : eventURL(draft)
+                    decision = try? Self.decoder().decode(GuidedNarrationDecision.self, from: Data(contentsOf: latestEvent))
+                    if decision?.kind == "improveNarration", let voice = audioReview?.voice {
+                        audioReview = GuidedAudioReview(voice: voice, attempt: 0)
+                    }
                     acknowledged = decision.map { FileManager.default.fileExists(atPath: acknowledgmentURL($0.id).path) } ?? false
                     phase = decision.map { $0.kind == "approveNarration" ? "approved" : "improving" } ?? "suspended"
                     message = decision == nil ? "Review restored. Replay the narration to resume; no speech starts automatically." : "Saved decision restored. Waiting for the agent."
@@ -221,7 +225,7 @@ final class GuidedNarrationReview: ObservableObject {
         let waiter = speechWaiter; speechWaiter = nil; waiter?.resume(returning: true)
         if active, phase == "reading" {
             phase = "awaitingDecision"
-            message = "Review narration: use the approval shortcut for wording, or regeneration shortcut to request improvement."
+            message = "Approve this wording or request an improvement."
         }
         publish()
     }
@@ -241,8 +245,11 @@ final class GuidedNarrationReview: ObservableObject {
         stopSpeech()
     }
 
+    var cancelAudioPreparation: () -> Void = {}
+
     private func cancelAudio() {
         audioOperationID = nil; audioTask?.cancel(); audioTask = nil; audioBusy = false
+        cancelAudioPreparation()
         stopAudioPreview(audioReview?.versionID)
     }
 
@@ -253,7 +260,7 @@ final class GuidedNarrationReview: ObservableObject {
         }
         onInterrupt()
         generation = UUID(); checkingSpeech = false
-        let wasAudioReview = audioReview != nil && audioDecision == nil
+        let wasAudioReview = decision?.kind == "approveNarration" && audioReview != nil && audioDecision == nil
         cancelAudio(); stopOwnedSpeech()
         if active, wasAudioReview {
             phase = "audioSuspended"; message = "Cloned audio review interrupted. Replay the candidate or use redo when idle."
@@ -281,15 +288,44 @@ final class GuidedNarrationReview: ObservableObject {
         return active
     }
 
-    private func choose(_ kind: String) {
-        guard active, let draft, decision == nil,
-              phase == "reading" || phase == "awaitingDecision" else { return }
+    func approveWording() { choose("approveNarration") }
+
+    func startAgentPractice() {
+        guard active, phase == "audioReady", !audioBusy else { return }
+        approveCurrentAudio()
+    }
+
+    var canImproveWording: Bool {
+        guard active, audioDecision == nil else { return false }
+        if decision == nil { return ["reading", "awaitingDecision"].contains(phase) }
+        return decision?.kind == "approveNarration"
+    }
+
+    func improveWording() {
+        guard canImproveWording else { return }
+        choose("improveNarration", fromAudio: decision != nil)
+    }
+
+    func startRestoredManualTake(_ approval: GuidedAudioDecision) {
+        guard active, approval.id == audioDecision?.id, draft == approval.draft, manualTask == nil else { return }
+        startManualTake(approval)
+    }
+
+    private func choose(_ kind: String, fromAudio: Bool = false) {
+        guard active, let draft else { return }
+        let revisingVoice = fromAudio && kind == "improveNarration" && decision?.kind == "approveNarration" && audioDecision == nil
+        guard revisingVoice || (decision == nil && ["reading", "awaitingDecision"].contains(phase)) else { return }
         let event = GuidedNarrationDecision(id: UUID(), kind: kind, draft: draft, createdAt: Date())
         do {
             // One immutable event file per revision is authoritative across crashes.
-            let url = eventURL(draft)
+            let url = revisingVoice ? voiceImprovementURL(draft) : eventURL(draft)
             guard !FileManager.default.fileExists(atPath: url.path) else { return }
             try write(event, to: url)
+            if revisingVoice {
+                deferredAudioChoice = nil
+                cancelAudio()
+                audioReview = audioReview.map { GuidedAudioReview(voice: $0.voice, attempt: 0) }
+            }
             decision = event; acknowledged = false
             phase = kind == "approveNarration" ? "approved" : "improving"
             message = kind == "approveNarration" ? "Narration approved. Waiting for the agent to receive it." : "Improvement requested. Waiting for the agent."
@@ -367,7 +403,7 @@ final class GuidedNarrationReview: ObservableObject {
 
     func generateAudio(forceNewVersion: Bool = false) {
         guard active, let draft, decision?.kind == "approveNarration", audioDecision == nil,
-              !audioBusy, let prepareAudio else { return }
+              (!audioBusy || forceNewVersion), let prepareAudio else { return }
         guard let voice = audioReview?.voice ?? selectedAudioVoice() else {
             phase = "audioFailed"; message = "Choose an English cloned voice, then use redo to generate audio. The wording remains approved."
             publish()
@@ -375,35 +411,40 @@ final class GuidedNarrationReview: ObservableObject {
             Task { [weak self] in await self?.announce("Narration approved. Choose an English cloned voice, then use redo to generate audio.", expectedGeneration: epoch) }
             return
         }
-        generation = UUID(); stopOwnedSpeech(); stopAudioPreview(audioReview?.versionID)
+        generation = UUID(); cancelAudio(); stopOwnedSpeech()
         let epoch = generation, operation = UUID()
         audioOperationID = operation; audioBusy = true
-        audioReview = GuidedAudioReview(voice: voice, attempt: (audioReview?.attempt ?? 0) + 1)
+        audioReview = GuidedAudioReview(voice: voice, attempt: (audioReview?.attempt ?? 0) + 1,
+                                       versionID: audioReview?.versionID, duration: audioReview?.duration)
         phase = "audioGenerating"; message = "Preparing cloned audio for the approved wording and frozen voice…"; publish()
         audioTask = Task { [weak self] in
             guard let self else { return }
             defer { if self.audioOperationID == operation { self.audioBusy = false; self.audioTask = nil; self.publish() } }
             let isCurrent: @MainActor () -> Bool = { self.active && self.generation == epoch && self.audioOperationID == operation && !Task.isCancelled }
             do {
-                try await self.sayAndWait(forceNewVersion ? "Regenerating audio." : "Preparing audio.", isCurrent: isCurrent)
+                try await self.sayAndWait(forceNewVersion ? "Regenerating audio." : "Preparing audio.", cueTimeout: .seconds(3), isCurrent: isCurrent)
                 let prepared = try await prepareAudio(draft.narration, voice.id, forceNewVersion, isCurrent)
                 guard isCurrent() else { return }
                 guard prepared.duration.isFinite, prepared.duration > 0 else { throw self.error("Cloned audio has no playable duration.") }
                 self.audioReview?.versionID = prepared.versionID; self.audioReview?.duration = prepared.duration
+                self.phase = "audioPreparing"
+                self.message = "Voice saved · \(String(format: "%.2f", prepared.duration)) seconds. Preparing preview."
+                self.publish()
+                try await self.sayAndWait("Review audio.", cueTimeout: .seconds(3), isCurrent: isCurrent)
                 try await self.playAudioCandidate(prepared, isCurrent: isCurrent)
             } catch {
                 guard isCurrent() else { return }
-                self.phase = "audioFailed"; self.message = "Cloned audio is not ready: \(error.localizedDescription) The wording and previous audio approvals are retained."
+                self.phase = "audioFailed"
+                self.message = "Audio attempt failed. \(error.localizedDescription)"
                 self.publish()
-                try? await self.sayAndWait("Cloned audio is not ready. Check the review panel, then use redo to retry.", isCurrent: isCurrent)
             }
         }
     }
 
     func replayAudio() {
-        guard active, audioDecision == nil, !audioBusy, let audio = audioReview,
+        guard active, decision?.kind == "approveNarration", audioDecision == nil, let audio = audioReview,
               let id = audio.versionID, let duration = audio.duration else { return }
-        generation = UUID(); stopOwnedSpeech(); stopAudioPreview(audio.versionID)
+        generation = UUID(); cancelAudio(); stopOwnedSpeech()
         let epoch = generation, operation = UUID()
         audioOperationID = operation; audioBusy = true
         phase = "audioPreparing"; message = "Preparing the saved cloned audio preview…"; publish()
@@ -420,18 +461,28 @@ final class GuidedNarrationReview: ObservableObject {
     }
 
     private func playAudioCandidate(_ audio: GuidedPreparedAudio, isCurrent: @MainActor () -> Bool) async throws {
-        try await sayAndWait("Review audio.", isCurrent: isCurrent)
+        guard isCurrent() else { throw CancellationError() }
         try await previewAudio(audio, isCurrent)
-        guard isCurrent() else { stopAudioPreview(audio.versionID); return }
-        phase = "audioReady"; message = "Review cloned audio: approve saves this exact version; redo generates another with the same wording and voice."
+        guard isCurrent() else { return }
+        phase = "audioReady"; message = "Listen again, revise the words, regenerate the voice, or choose who will perform the scene."
         publish()
     }
 
-    private func sayAndWait(_ text: String, isCurrent: @MainActor () -> Bool) async throws {
+    private func sayAndWait(_ text: String, cueTimeout: Duration? = nil, isCurrent: @escaping @MainActor () -> Bool) async throws {
         if let issue = await canSpeak() { throw error(issue) }
         guard isCurrent() else { throw CancellationError() }
+        let token = UUID()
+        let watchdog = cueTimeout.map { timeout in
+            Task { @MainActor [weak self] in
+                try await Task.sleep(for: timeout)
+                guard let self, self.speechToken == token, isCurrent() else { return }
+                self.stopSpeech()
+                self.speechFinished(token)
+            }
+        }
+        defer { watchdog?.cancel() }
         let finished = await withCheckedContinuation { continuation in
-            let token = UUID(); speechToken = token; speechWaiter = continuation
+            speechToken = token; speechWaiter = continuation
             publish(); speak(text, token)
         }
         try Task.checkCancellation()
@@ -626,7 +677,9 @@ final class GuidedNarrationReview: ObservableObject {
             }
             nextCandidate = command.nextCandidate
             generation = UUID(); cancelAudio(); stopOwnedSpeech()
-            audioReview = nil; audioDecision = nil; audioAcknowledged = false
+            let revisedVoice = active && draft?.sessionID == next.sessionID ? audioReview?.voice : nil
+            audioReview = revisedVoice.map { GuidedAudioReview(voice: $0, attempt: 0) }
+            audioDecision = nil; audioAcknowledged = false
             let enteringChapterScene = remainingChapterScenes != nil && draft?.sessionID != next.sessionID
             draft = next; active = true; decision = nil; acknowledged = false; checkingSpeech = false
             if enteringChapterScene { onChapterSceneSelected(next.sceneID) }
@@ -674,6 +727,9 @@ final class GuidedNarrationReview: ObservableObject {
         }
     }
 
+    private func voiceImprovementURL(_ draft: GuidedNarrationDraft) -> URL {
+        eventURL(draft).deletingPathExtension().appendingPathExtension("improve.json")
+    }
     private func eventURL(_ draft: GuidedNarrationDraft) -> URL {
         directory.appendingPathComponent("events/\(draft.sessionID.uuidString.lowercased())-r\(draft.revision).json")
     }

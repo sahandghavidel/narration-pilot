@@ -157,6 +157,84 @@ import Foundation
         precondition(recordCommand.runID == practice.runID)
         practice.end(); precondition(!practice.approve() && !practice.redo())
 
+        // Exercise the actual ten-action router, including an edit during playback.
+        let review = GuidedNarrationReview(directory: root.appendingPathComponent("review"))
+        review.canSpeak = { nil }
+        review.speak = { _, token in review.speechFinished(token) }
+        review.selectedAudioVoice = { audio.voice }
+        var preparedTexts: [String] = []
+        review.prepareAudio = { text, voiceID, _, isCurrent in
+            precondition(isCurrent() && voiceID == audio.voice.id)
+            preparedTexts.append(text)
+            return GuidedPreparedAudio(versionID: UUID(), duration: 4.6)
+        }
+        var previewWaiter: CheckedContinuation<Void, Never>?
+        review.previewAudio = { _, _ in await withCheckedContinuation { previewWaiter = $0 } }
+        var stoppedVersions: [UUID] = []
+        review.stopAudioPreview = { if let id = $0 { stoppedVersions.append(id) } }
+        review.approveAudioVersion = { _, _, _ in }
+        review.onAudioApproved = { practice.begin($0) }
+        review.onEnd = { practice.end() }
+        let last = GuidedNarrationDraft(sessionID: UUID(), sceneID: "next-row", revision: 1, narration: "Next scene.")
+        try await review.beginChapter([draft, last])
+        func press(_ action: GuidedAction) { action.perform(review, practice) }
+        press(.replayNarration)
+        await Task.yield()
+        press(.approveWording)
+        try await waitFor { previewWaiter != nil }
+        let discarded = review.audioReview!.versionID!
+        press(.improveWording)
+        precondition(review.phase == "improving" && stoppedVersions.contains(discarded))
+        precondition(review.audioReview?.versionID == nil && review.audioDecision == nil)
+        let restoredEdit = GuidedNarrationReview(directory: review.directory)
+        precondition(restoredEdit.decision?.id == review.decision?.id && restoredEdit.phase == "improving")
+        previewWaiter?.resume(); previewWaiter = nil
+        var revision = draft; revision.revision += 1; revision.narration = "Revised wording."
+        let command = GuidedNarrationCommand(id: UUID(), sessionID: draft.sessionID, kind: "submit", draft: revision, eventID: review.decision!.id)
+        try GuidedNarrationReview.encoder().encode(command).write(to: review.directory.appendingPathComponent("commands/\(command.id).json"), options: .atomic)
+        await review.processInbox()
+        review.selectedAudioVoice = { nil } // The revision keeps the initially selected voice.
+        review.previewAudio = { _, _ in }
+        press(.approveWording)
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        let revisedVersion = review.audioReview!.versionID!
+        press(.replayVoice)
+        try await waitFor { !review.audioBusy }
+        precondition(review.audioReview?.versionID == revisedVersion && preparedTexts == [draft.narration, revision.narration])
+        press(.regenerateVoice)
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        let finalVersion = review.audioReview!.versionID!
+        precondition(finalVersion != revisedVersion)
+        press(.startPractice)
+        try await waitFor { practice.phase == "practiceRequested" }
+        var handoffPlan = plan; handoffPlan.audioVersionID = finalVersion
+        _ = try await send("plan", plan: handoffPlan)
+        gate.verifiedAt = Date()
+        _ = try await send("start", gate: gate)
+        _ = try await send("finish", results: results)
+        player.completion?(true)
+        press(.replayPractice)
+        precondition(practice.phase == "practiceRequested" && practice.plan?.id == handoffPlan.id)
+        precondition(practice.pendingEvent?.kind == "practiceReplayRequested")
+        _ = try await send("start", gate: gate)
+        _ = try await send("finish", results: results)
+        player.completion?(true)
+        var manualCalls = 0
+        review.recordManualAudio = { event in
+            precondition(event.audio.versionID == finalVersion && event.draft == revision)
+            manualCalls += 1
+        }
+        press(.manual); press(.manual); press(.agentRecord)
+        precondition(practice.phase == "manualRestoreRequested" && manualCalls == 0)
+        _ = try await send("manualReady", gate: staleGate, accepted: false)
+        _ = try await send("manualReady", gate: gate)
+        try await waitFor { practice.phase == "manualReady" && !practice.promptBusy }
+        press(.manual); press(.manual)
+        try await waitFor { review.draft == last }
+        precondition(manualCalls == 1 && recordCalls == 1 && !practice.active)
+        review.end()
+        print("PASS: voice-preview wording revision, same-voice replay and regeneration, unchanged rehearsal replay, restored two-press manual handoff and single scene advance")
+
         // A late material loader cannot replace a newer session's frozen audio.
         var pendingAssets: CheckedContinuation<GuidedPracticeAssets, Never>?
         var oldApproval = approval; oldApproval.id = UUID()

@@ -75,6 +75,7 @@ def listen_for_chapter_request(review_root):
                                     and event.get('runID') == practice.get('runID')):
                                 return dict(request='checkPractice', draft=draft, runID=practice['runID'], message=event['message'])
                     if (practice.get('active') and practice['phase'] == 'practiceRequested'
+                            and (practice.get('pendingEvent') or {}).get('kind') != 'practiceReplayRequested'
                             and approval.get('draft') == draft
                             and approval.get('id') == (review.get('audioDecision') or {}).get('id')):
                         return dict(request='improvePractice' if practice.get('attempt', 1) > 1 else 'practice', draft=draft, runID=practice['runID'])

@@ -244,6 +244,36 @@ final class GuidedPracticeSession: ObservableObject {
         return true
     }
 
+    func requestManualRestore() {
+        guard active, phase == "practiceReady", audioFinished, actionsFinished else { return }
+        stopPrompt()
+        do {
+            try emit("manualRestoreRequested")
+            phase = "manualRestoreRequested"
+            message = "Waiting for the agent to restore the starting screen for your take."
+            promptBusy = false
+            publish()
+        } catch { block(error.localizedDescription) }
+    }
+
+    func replayPractice() {
+        guard active, phase == "practiceReady", plan != nil, assets != nil else { return }
+        cancelWork(pauseRecording: false)
+        runID = UUID()
+        attempt += 1
+        audioFinished = false
+        actionsFinished = false
+        elapsed = 0
+        audioEndedAt = nil
+        actionResults = []
+        do {
+            try emit("practiceReplayRequested")
+            phase = "practiceRequested"
+            message = "Restoring the starting screen to replay the same rehearsal."
+            publish()
+        } catch { block(error.localizedDescription) }
+    }
+
     func end() {
         cancelWork(pauseRecording: true)
         active = false; phase = "inactive"; message = "Guided practice ended."
@@ -356,7 +386,7 @@ final class GuidedPracticeSession: ObservableObject {
     private func finishIfReady() {
         guard audioFinished, actionsFinished, ["practicing", "waitingForActions"].contains(phase) else { return }
         phase = "practiceReady"; message = "Practice finished. Approve to restore the start and record; request an improvement to rehearse revised actions with this same audio."
-        notify("Practice finished. Approve or improve.")
+        notify("Practice finished. Choose replay, improve, agent recording, or record myself.")
     }
 
     private func beginRecording(gate: GuidedPracticeGate?) throws {
@@ -474,7 +504,7 @@ final class GuidedPracticeSession: ObservableObject {
             eventAcknowledged = true
             try writeReceipt(command.id, true, "Agent received practice request.", to: directory.appendingPathComponent("acknowledgments/\(command.eventID!.uuidString.lowercased()).json"))
         case "plan":
-            guard phase == "practiceRequested", let submitted = command.plan, let assets,
+            guard phase == "practiceRequested", pendingEvent?.kind != "practiceReplayRequested", let submitted = command.plan, let assets,
                   submitted.audioVersionID == assets.context.audioVersionID, submitted.audioSHA256 == assets.context.audioSHA256,
                   baselineCheckpointID == nil || baselineCheckpointID == submitted.checkpointID else { throw error("Plan does not match the audio or original starting checkpoint.") }
             guard Set(submitted.actions.map(\.id)).count == submitted.actions.count else { throw error("Action IDs must be unique.") }
@@ -492,6 +522,12 @@ final class GuidedPracticeSession: ObservableObject {
             guard ["practicing", "waitingForActions"].contains(phase) else { throw error("Practice must be running or waiting for action results.") }
             actionResults = try validatedResults(command.results, recording: false)
             actionsFinished = true; finishIfReady()
+        case "manualReady":
+            guard phase == "manualRestoreRequested", let plan else { throw error("No manual handoff requested.") }
+            try validateGate(command.gate, checkpoint: plan.checkpointID)
+            phase = "manualReady"
+            message = "Starting screen restored. Choose Record myself to start your take."
+            notify("Ready. Press Command Shift M to start your take.")
         case "record": try beginRecording(gate: command.gate)
         case "recordFinish":
             guard ["recording", "waitingForRecordActions"].contains(phase) else { throw error("No recording is waiting for these action results.") }

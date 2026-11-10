@@ -3,6 +3,8 @@ import SwiftUI
 
 struct GuidedNarrationReviewView: View {
     @ObservedObject var review: GuidedNarrationReview
+    @ObservedObject var practice: GuidedPracticeSession
+    @EnvironmentObject private var appModel: AppModel
     private var reviewingAudio: Bool { review.decision?.kind == "approveNarration" }
     var body: some View {
         GroupBox("Guided Narration & Audio Review") {
@@ -27,38 +29,33 @@ struct GuidedNarrationReviewView: View {
                         }
                     }
                     if review.audioBusy { ProgressView().controlSize(.small) }
-                    HStack {
-                        Button(reviewingAudio ? "Approve Audio" : "Approve Wording") { review.approve() }
-                            .disabled(review.audioBusy || (reviewingAudio ? review.phase != "audioReady" : !["reading", "awaitingDecision"].contains(review.phase)))
-                        Button(reviewingAudio ? "Regenerate Audio" : "Improve Wording") { review.improve() }
-                            .disabled(review.audioBusy || (reviewingAudio ? !["approved", "audioReady", "audioFailed", "audioSuspended"].contains(review.phase) : !["reading", "awaitingDecision"].contains(review.phase)))
-                    }
-                    if ["audioReady", "manualRetry"].contains(review.phase) {
-                        Button("Record Myself") { review.recordMyself() }
-                    }
-                    HStack {
-                        if reviewingAudio {
-                            Button("Replay Saved Audio") { review.replayAudio() }
-                                .disabled(review.audioBusy || review.audioReview?.versionID == nil || review.audioDecision != nil)
-                            if review.audioReview == nil {
-                                Button("Generate Audio") { review.generateAudio() }.disabled(review.audioBusy || review.audioDecision != nil)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 175))], alignment: .leading) {
+                        ForEach(GuidedAction.allCases.filter { $0.available(review, practice) }) { action in
+                            Button {
+                                action.perform(review, practice)
+                            } label: {
+                                HStack {
+                                    Text(action.rawValue)
+                                    if let shortcut = action.shortcut.shortcut {
+                                        Text(String(describing: shortcut)).foregroundStyle(.secondary)
+                                    }
+                                }
                             }
-                        } else {
-                            Button("Replay Narration") { Task { await review.replay() } }.disabled(review.decision != nil || review.phase == "checking")
                         }
-                        Button("End Guided Review") { review.end() }
+                    }
+                    Button("End Guided Review") { review.end() }
+                }
+                DisclosureGroup("Guided shortcuts") {
+                    ForEach(GuidedAction.allCases) { action in
+                        KeyboardShortcuts.Recorder(action.rawValue, name: action.shortcut) { _ in
+                            appModel.refreshGuidedShortcuts(force: true)
+                        }
+                    }
+                    Button("Restore guided defaults") {
+                        KeyboardShortcuts.reset(GuidedAction.allCases.map(\.shortcut))
+                        appModel.refreshGuidedShortcuts(force: true)
                     }
                 }
-                HStack {
-                    KeyboardShortcuts.Recorder("Approve wording / audio / practice", name: .approveClonedClipboardAudio)
-                    Button("Use ⇧⌘A") { KeyboardShortcuts.reset(.approveClonedClipboardAudio) }
-                        .help("Restore Command-Shift-A for approval")
-                }
-                KeyboardShortcuts.Recorder("Improve / regenerate / improve practice", name: .regenerateClonedClipboardAudio)
-                KeyboardShortcuts.Recorder("Record myself", name: .recordGuidedManually)
-                KeyboardShortcuts.Recorder("Record myself (alternate)", name: .recordGuidedManuallyAlternate)
-                Text("Approve the wording to hear the voice. Then choose Record Myself to perform the actions, or approve the voice for guided practice. After the take, the next Baserow scene is read aloud.")
-                    .font(.caption2).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
         }
     }

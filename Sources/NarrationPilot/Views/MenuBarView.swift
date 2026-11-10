@@ -39,7 +39,7 @@ struct MenuBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            GuidedNarrationReviewView(review: appModel.guidedNarrationReview)
+            GuidedNarrationReviewView(review: appModel.guidedNarrationReview, practice: appModel.guidedPractice)
             GuidedPracticeView(practice: appModel.guidedPractice, review: appModel.guidedNarrationReview)
 
             AgentFeedbackView(feedback: appModel.agentFeedback)

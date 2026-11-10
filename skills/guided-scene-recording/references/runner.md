@@ -47,7 +47,7 @@ Once prepared, submit narration:
 python3 /Users/sahand/Desktop/projects-test/narration-pilot/scripts/guided-narration-review.py submit --session-id YOUR-SESSION-UUID --scene-id calculator-test --text "Let's add twelve and eight in Calculator. Click equals. The answer is twenty."
 ```
 
-The same worker handles practice and A-to-record. During practice, G asks the active agent for better screen actions. Submit the revised scene with `update --scene-file PATH --run-id RUN_ID` so the runner can rehearse it from the same checkpoint. It never sends those approval shortcuts. Physical keys are handled by Narration Pilot.
+The same worker handles practice and R-to-record. After practice, I asks the active agent for better screen actions. Submit the revised scene with `update --scene-file PATH --run-id RUN_ID` so the runner can rehearse it from the same checkpoint. It never sends those approval shortcuts. Physical keys are handled by Narration Pilot.
 
 ## AgentCursor screenshots only
 

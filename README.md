@@ -222,7 +222,7 @@ of the existing macOS speech engine. Existing macOS speech behavior, voice/speed
 settings, and shortcuts are unchanged.
 
 1. The agent submits a draft. **Review narration** reads it using macOS speech.
-   Command–Shift–G requests improved wording from the active agent; a revision
+   Command–Shift–E requests improved wording from the active agent; a revision
    must answer that exact improvement event. Command–Shift–A approves the wording.
 2. Wording approval automatically prepares and previews cloned audio by calling
    the existing Ultimate Video Editor client directly. No clipboard change,
@@ -231,7 +231,7 @@ settings, and shortcuts are unchanged.
    An existing approved match is reused locally; otherwise a new version is saved.
 3. **Review cloned audio** announces the stage, then plays the saved WAV.
    Command–Shift–G stops that candidate and generates another version using the
-   same wording/voice, keeping previous versions and approvals. Command–Shift–A
+   same wording/voice, keeping previous versions and approvals. Command–Shift–P
    approves the exact previewed version and creates a separate audio approval
    event. Tiny.en word timings fill in the background; they do not delay approval.
 4. Audio approval automatically prepares **guided practice**. The active agent
@@ -239,8 +239,7 @@ settings, and shortcuts are unchanged.
    and cursor checkpoint, and submits a plan anchored to word indices or audio
    times. Practice plays the approved WAV while the agent performs those actions,
    with FocuSee observed paused.
-5. Once both playback and reported practice actions finish, A approves practice
-   and requests recording; G restores the same checkpoint and practices again
+5. Once both playback and reported practice actions finish, R requests agent recording. L restores the same checkpoint and replays the rehearsal
    with the same audio. Recording starts only after the agent restores/verifies
    that original checkpoint and explicitly starts the approved take. The same
    practiced plan and WAV are used; original recording settings/idle waiting and
@@ -264,7 +263,7 @@ speech/network/playback automatically, and requires a replay or explicit redo.
 
 The panel shows narration revision, stage, frozen voice, candidate duration,
 approval status, replay and **End Guided Review**. Outside a guided session, the
-existing T/G/A/R audio shortcuts retain their standalone behavior. Existing
+existing T/G/A audio shortcuts retain their standalone behavior. Existing
 wording-only approvals can continue through redo or **Generate Audio**.
 
 The private local bridge remains under
@@ -325,7 +324,7 @@ python3 scripts/guided-practice.py context --run-id RUN_UUID
 python3 scripts/guided-practice.py plan --run-id RUN_UUID --plan-file /absolute/path/plan.json
 python3 scripts/guided-practice.py start --run-id RUN_UUID --gate-file /absolute/path/fresh-gate.json
 python3 scripts/guided-practice.py finish --run-id RUN_UUID --results-file /absolute/path/practice-actions.json
-# The real user's A approval creates this next event; no synthetic approval:
+# The real user's R approval creates this next event; no synthetic approval:
 python3 scripts/guided-practice.py watch --session-id SESSION_UUID --kind recordRequested --ack --timeout 55
 # Restore the exact original screen/cursor and save a new gate before this:
 python3 scripts/guided-practice.py record --run-id RUN_UUID --gate-file /absolute/path/record-gate.json
@@ -345,8 +344,8 @@ practice approval or announcing a completed recorded scene. Fast mode's pause
 command remains unverified by the recorder controller; action reports and the
 saved footage still require the agent/user's normal review.
 
-G can interrupt a practice and request another attempt, keeping all approved
-audio. A/G during preparation cannot approve a later stage. Practice-ready A/G
+I requests an improved practice with the approved audio. Stage-specific shortcuts
+are enabled when their actions become available. Practice-ready decisions
 can interrupt the spoken ready cue. Recording requires that actual practice
 approval, the frozen plan, a fresh restoration gate, and valid recording
 Resume/Pause settings or Fast mode. An interrupted/restarted session requires a
@@ -361,7 +360,7 @@ settings are changed.
 The optional persistent runner removes per-take script construction and most
 agent/tool round trips. Prepare the scene's visible action targets and reversible
 restore recipe before narration is announced (or during its review). One Node /
-AgentCursor process handles later practice requests, G requests for improved practice and A-to-record,
+AgentCursor process handles later practice requests, I requests for improved practice and R to record,
 using the approved WAV clock and resolved word cues. The native SDK stays warm;
 movement pacing is reset to the same seed per attempt. Other speech and A/G
 bindings retain their existing behavior; guided spoken announcements are shorter.
@@ -396,11 +395,11 @@ It documents the scene schema, word aliases/lead times, evidence requests, repai
 commands, and the hands-free flow. The existing
 `record-narration-pilot-tutorial` skill is deliberately unchanged.
 
-### Record a Baserow chapter with A, G and M
+### Record a Baserow chapter with guided shortcuts
 
 Select a Baserow scene in the JSON Scene Manager. The reader and **Guided Narration & Audio Review** share that selection. Pause FocuSee and click **Start Chapter Review** to review from the selected row through the end of its chapter. Selecting another row during review starts wording review from that row. A selection made during a take takes effect when the take finishes.
 
-Use **⌘⇧A** to approve wording or **⌘⇧G** to request a revision from the active agent. After the cloned voice preview, **⌘⇧G** regenerates the voice, **⌘⇧A** requests guided practice. During practice, **⌘⇧G** asks the agent to improve the screen actions and rehearse again with the approved voice. At voice preview, **⌘⇧M** or **⌃⇧M** records your own mouse and keyboard actions with that exact voice. Manual takes skip practice. Once the take finishes and FocuSee confirms pause, the app reads the next scene. The final take announces chapter completion. For guided takes, the app starts the next spoken prompt while the runner saves the ending screen. The next take or practice waits for that checkpoint. An active agent is needed for wording revisions and guided actions.
+All ten guided defaults use Command–Shift. N replays narration, E requests revised wording (including during voice preview), A approves wording, V replays the saved voice, and G generates another delivery. P starts agent practice, L replays the same rehearsal, I requests improved actions, and R records the practiced plan. M records your actions with the approved voice. After practice, press M to restore the starting screen, then press M again after the ready cue to start. Once the take finishes and FocuSee confirms pause, the app reads the next scene. The final take announces chapter completion. For guided takes, the app starts the next spoken prompt while the runner saves the ending screen. The next take or practice waits for that checkpoint. An active agent is needed for wording revisions and guided actions.
 
 ### Approved audio recording
 

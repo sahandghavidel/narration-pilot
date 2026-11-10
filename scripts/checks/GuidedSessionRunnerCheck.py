@@ -28,7 +28,8 @@ def write(path, value):
 
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, manual=False):
+        self.manual = manual
         self.root = root
         self.sid, self.audio = uid(), uid()
         self.guide = dict(active=False, phase='inactive')
@@ -87,6 +88,12 @@ class App:
                         self.started=time.monotonic(); self.mode=kind
                         self.state.update(phase='practicing' if kind=='start' else 'recording',elapsed=.001,results=False)
                         if kind=='record': self.capture='recording';self.take=uid()
+                    elif kind == 'manualReady':
+                        assert self.state['phase'] == 'manualRestoreRequested'
+                        assert self.capture == 'paused' and cmd['gate']['matched']
+                        assert Path(cmd['gate']['evidencePath']).is_file()
+                        assert json.loads((self.root/'ui.json').read_text())['text'] == self.starting_text
+                        self.state['phase'] = 'manualReady'
                     elif kind in ['finish','recordFinish']:
                         if kind=='recordFinish': assert all(r['captureState']=='recording' for r in cmd['results'])
                         self.state['results']=True
@@ -99,7 +106,13 @@ class App:
                     if elapsed>=.35 and self.state['results']:
                         if self.mode=='start':
                             self.practice_finishes+=1
-                            if self.practice_finishes==1:self.request() # Fixture user's G.
+                            if self.manual and self.practice_finishes == 1:
+                                plan = self.state['plan']
+                                self.request()
+                                self.state.update(plan=plan, pendingEvent=dict(id=uid(),kind='practiceReplayRequested'))
+                            elif self.manual:
+                                self.state.update(phase='manualRestoreRequested',pendingEvent=dict(id=uid(),kind='manualRestoreRequested'))
+                            elif self.practice_finishes==1:self.request() # Fixture user's G.
                             else:self.state.update(phase='recordRequested',pendingEvent=dict(id=uid(),kind='recordRequested')) # Fixture user's A.
                         else:
                             self.state.update(phase='completed',recordingResult=dict(sessionID=self.take,duration=.35))
@@ -125,9 +138,9 @@ class App:
 
 
 class RunnerCheck(unittest.TestCase):
-    def run_case(self, denied=False, bad=False, reappear=False):
+    def run_case(self, denied=False, bad=False, reappear=False, manual=False):
         with tempfile.TemporaryDirectory(prefix='guided-session-check-') as folder:
-            root=Path(folder);app=App(root/'app');worker=root/'worker'
+            root=Path(folder);app=App(root/'app',manual);worker=root/'worker'
             env=dict(os.environ,GUIDED_RUNNER_FIXTURE_ROOT=str(root/'app'),GUIDED_RUNNER_DENY_CAPTURE=str(int(denied)),GUIDED_RUNNER_BAD_RECORD_IMAGE=str(int(bad)))
             def cli(*args):
                 r=subprocess.run(['python3',str(CLI),'--directory',str(worker),*args],capture_output=True,text=True,env=env,timeout=15)
@@ -179,6 +192,10 @@ class RunnerCheck(unittest.TestCase):
                         self.assertTrue(bad,(state,app.errors))
                         self.assertIn('Visual continuity mismatch',state['message'])
                         self.assertEqual(app.record_starts,0);break
+                    if manual and app.state['phase']=='manualReady':
+                        self.assertEqual(app.practice_finishes, 2)
+                        self.assertEqual(app.record_starts, 0)
+                        break
                     if state['phase']=='sceneComplete':
                         self.assertFalse(bad)
                         ending=json.loads(Path(state['endingCheckpoint']).read_text())
@@ -207,7 +224,7 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual(sum(x['verb']=='click' and x['value']=='All Clear' for x in trace),2)
                 self.assertEqual(sum(x['verb']=='minimize' for x in trace),2 if reappear else 1)
                 self.assertEqual(sum(x['verb']=='activate' and x['value']=='ChatGPT' for x in trace),2 if reappear else 1)
-                self.assertEqual(sum(x['verb']=='click' and x['value']=='One' for x in trace),2 if bad else 3)
+                self.assertEqual(sum(x['verb']=='click' and x['value']=='One' for x in trace),2 if bad or manual else 3)
                 self.assertTrue(all(x['phase']!='recording' for x in trace if x['verb']=='click' and x['value']=='All Clear'))
             finally:
                 if started:
@@ -219,6 +236,7 @@ class RunnerCheck(unittest.TestCase):
                 app.close()
 
     def test_minimize_again_only_after_codex_reappears(self):self.run_case(reappear=True)
+    def test_same_rehearsal_replay_then_manual_restore(self):self.run_case(manual=True)
     def test_native_capture_redo_and_record(self):self.run_case()
     def test_fresh_cua_evidence_fallback(self):self.run_case(denied=True)
     def test_visual_mismatch_blocks_recording(self):self.run_case(bad=True)

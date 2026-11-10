@@ -117,16 +117,18 @@ def main():
             current = ensure_live(root)
             if current.get('draft', {}).get('sessionID', '').lower() != session.lower():
                 raise RuntimeError('The requested review session is no longer current')
-            if path.exists():
-                event = load(path)
-                if (event.get('schemaVersion') != 1 or event.get('kind') not in (['approveAudio'] if args.stage == 'audio' else ['approveNarration', 'improveNarration'])
+            improvement = root / 'events' / f'{session.lower()}-r{args.revision}.improve.json'
+            selected = improvement if improvement.exists() else path
+            if selected.exists():
+                event = load(selected)
+                if (event.get('schemaVersion') != 1 or event.get('kind') not in (['approveAudio', 'improveNarration'] if args.stage == 'audio' else ['approveNarration', 'improveNarration'])
                         or event.get('draft', {}).get('revision') != args.revision
                         or event.get('draft', {}).get('sessionID', '').lower() != session.lower()):
                     raise RuntimeError('Invalid decision event')
                 # Event files are committed before the status snapshot. Re-read
                 # after observing the event, and tolerate that publication gap.
                 current = ensure_live(root)
-                if (current.get('audioDecision' if args.stage == 'audio' else 'decision') or {}).get('id') == event['id']:
+                if (current.get('audioDecision' if event['kind'] == 'approveAudio' else 'decision') or {}).get('id') == event['id']:
                     result = dict(event=event)
                     if args.ack:
                         result['receipt'] = send(root, session, 'acknowledge', event_id=event['id'])

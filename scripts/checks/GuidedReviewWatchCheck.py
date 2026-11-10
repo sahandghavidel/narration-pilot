@@ -43,6 +43,26 @@ class GuidedReviewWatchCheck(unittest.TestCase):
             finally:
                 thread.join()
 
+    def test_audio_watcher_receives_a_later_wording_request(self):
+        with tempfile.TemporaryDirectory(prefix='guided-watch-check-') as folder:
+            root = Path(folder)
+            (root / 'events').mkdir()
+            sid = str(uuid.uuid4())
+            draft = dict(sessionID=sid, revision=1)
+            approval = dict(schemaVersion=1, id=str(uuid.uuid4()), kind='approveNarration', draft=draft)
+            edit = dict(approval, id=str(uuid.uuid4()), kind='improveNarration')
+            (root / 'events' / f'{sid}-r1.json').write_text(json.dumps(approval))
+            (root / 'events' / f'{sid}-r1.improve.json').write_text(json.dumps(edit))
+            status = dict(schemaVersion=1, appRunning=True, pid=os.getpid(), draft=draft,
+                          phase='improving', decision=edit)
+            (root / 'status.json').write_text(json.dumps(status))
+            for stage in ['audio', 'narration']:
+                result = subprocess.run(['python3', str(HELPER), '--directory', str(root), 'watch',
+                                         '--stage', stage, '--session-id', sid, '--revision', '1', '--timeout', '1'],
+                                        capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['event']['id'], edit['id'])
+
     def test_genuinely_older_revision_is_rejected(self):
         with tempfile.TemporaryDirectory(prefix='guided-watch-check-') as folder:
             root = Path(folder)

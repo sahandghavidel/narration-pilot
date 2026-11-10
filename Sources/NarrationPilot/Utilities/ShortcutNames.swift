@@ -4,9 +4,13 @@ extension KeyboardShortcuts.Name {
     static let recordGuidedManually = Self("recordGuidedManually",
         default: KeyboardShortcuts.Shortcut(.m, modifiers: [.command, .shift]))
 
-    static let recordGuidedManuallyAlternate = Self("recordGuidedManuallyAlternate",
-        default: KeyboardShortcuts.Shortcut(.m, modifiers: [.control, .shift]))
-
+    static let guidedReplayNarration = Self("guidedReplayNarration", default: .init(.n, modifiers: [.command, .shift]))
+    static let guidedImproveWording = Self("guidedImproveWording", default: .init(.e, modifiers: [.command, .shift]))
+    static let guidedReplayVoice = Self("guidedReplayVoice", default: .init(.v, modifiers: [.command, .shift]))
+    static let guidedStartPractice = Self("guidedStartPractice", default: .init(.p, modifiers: [.command, .shift]))
+    static let guidedReplayPractice = Self("guidedReplayPractice", default: .init(.l, modifiers: [.command, .shift]))
+    static let guidedImprovePractice = Self("guidedImprovePractice", default: .init(.i, modifiers: [.command, .shift]))
+    static let guidedAgentRecord = Self("guidedAgentRecord", default: .init(.r, modifiers: [.command, .shift]))
     static let recordApprovedClipboardAudio = Self("recordApprovedClipboardAudio")
 
     static let approveClonedClipboardAudio = Self(

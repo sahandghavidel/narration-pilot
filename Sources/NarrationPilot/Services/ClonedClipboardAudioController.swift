@@ -235,13 +235,25 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         return transcribeApprovedAudio(take.id)
     }
 
+    private var guidedPreparationID: UUID?
+
+    func cancelGuidedPreparation() {
+        guard guidedPreparationID != nil else { return }
+        guidedPreparationID = nil
+        isGenerating = false
+    }
+
     /// Calls the existing editor directly with frozen wording/voice; never reads
     /// or writes the system clipboard and never starts playback implicitly.
     func prepareGuidedAudio(narration: String, voiceID: String, forceNewVersion: Bool,
                             isCurrent: @MainActor () -> Bool) async throws -> ClipboardAudioTake {
         guard !isGenerating else { throw recordingError("Wait for current audio preparation to finish.") }
         isGenerating = true
-        defer { isGenerating = false }
+        let operation = UUID()
+        guidedPreparationID = operation
+        defer {
+            if guidedPreparationID == operation { cancelGuidedPreparation() }
+        }
         let text = SpokenTextSanitizer.preparingForSpeech(narration, includesBracketedDirections: false)
         guard !text.isEmpty, text.count <= 12000 else { throw recordingError("Review one nonempty narration of up to 12,000 characters.") }
         try Task.checkCancellation()
