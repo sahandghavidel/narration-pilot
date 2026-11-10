@@ -845,6 +845,10 @@ final class AppModel: ObservableObject {
     private var baserowScriptIDsBySceneID: [String: Int] = [:]
     private var baserowLastEditedBySceneID: [String: Date] = [:]
     private var baserowRevision = ""
+    private var sceneSaveTask: Task<Void, Never>?
+    private var latestSceneSave: [Int: UUID] = [:]
+    @Published private(set) var failedSceneSaves: [String: String] = [:]
+    private var retrySceneSaves: [String: () -> Void] = [:]
     private var baserowSyncRequested = false
     private var baserowSyncWaiters: [CheckedContinuation<Void, Never>] = []
     private struct BaserowUndoEntry {
@@ -1375,6 +1379,9 @@ final class AppModel: ObservableObject {
 
     func disconnectBaserow() {
         clearBaserowUndo()
+        latestSceneSave.removeAll()
+        retrySceneSaves.removeAll()
+        failedSceneSaves.removeAll()
         isBaserowConnected = false
         baserowScripts = []
         baserowPartOptions = []
@@ -1988,6 +1995,7 @@ final class AppModel: ObservableObject {
         }
 
         isBaserowSyncing = true
+        await sceneSaveTask?.value
         repeat {
             baserowSyncRequested = false
             await performBaserowSync(force: force)
@@ -2293,11 +2301,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func saveEditedChapterJSON(_ text: String) {
-        if scriptInputFormat == .baserow, isBaserowConnected {
-            saveEditedBaserowChapter(text)
+    func saveEditedChapter(_ chapter: NarrationChapter, restartGuidedReview: Bool) throws {
+        if scriptInputFormat == .baserow {
+            try saveEditedBaserowChapter(chapter, restartGuidedReview: restartGuidedReview)
             return
         }
+        let data = try JSONEncoder.narrationPilot.encode(chapter)
+        let text = String(decoding: data, as: UTF8.self)
         if scriptInputFormat == .json, isNotionConnected {
             saveEditedNotionChapter(text)
             return
@@ -2357,47 +2367,67 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func saveEditedBaserowChapter(_ text: String) {
-        do {
-            let chapter = try NarrationChapterLoader.decode(
-                Data(text.utf8),
-                allowsEmptySceneContent: true
-            )
-            guard let oldChapter = loadedChapter,
-                  let changed = chapter.scenes.first(where: { scene in
-                      oldChapter.scenes.first(where: { $0.id == scene.id }) != scene
-                  }),
-                  let rowID = baserowRowIDsBySceneID[changed.id] else {
-                statusMessage = "No Baserow scene change found."
-                return
-            }
-            loadedChapter = chapter
-            refreshScriptScenes()
-            saveBaserowCache(chapter)
-            statusMessage = "Saving Scene \(changed.sceneNumber) to Baserow…"
-            Task { [weak self] in
-                guard let self else { return }
+    private func saveEditedBaserowChapter(_ chapter: NarrationChapter, restartGuidedReview: Bool) throws {
+        guard isBaserowConnected, !isBaserowSyncing, let oldChapter = loadedChapter else {
+            throw BaserowSceneError.invalidScenes("Connect Baserow and finish syncing before saving.")
+        }
+        guard let changed = chapter.scenes.first(where: { scene in
+            oldChapter.scenes.first(where: { $0.id == scene.id }) != scene
+        }) else { return }
+        guard let rowID = baserowRowIDsBySceneID[changed.id],
+              let old = oldChapter.scenes.first(where: { $0.id == changed.id }) else {
+            throw BaserowSceneError.invalidScenes("The edited scene is no longer loaded.")
+        }
+
+        let currentDraft = guidedNarrationReview.draft
+        let reset = isReviewingBaserowChapter && currentDraft?.sceneID == changed.id && old.narration != changed.narration
+        if reset, changed.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || changed.narration.count > 12000 {
+            throw BaserowSceneError.invalidScenes("Guided narration needs 1–12,000 characters. Edit the wording before saving.")
+        }
+        loadedChapter = chapter
+        refreshScriptScenes()
+        saveBaserowCache(chapter)
+        if reset && restartGuidedReview, let currentDraft {
+            Task { @MainActor in
+                guard self.isReviewingBaserowChapter, self.guidedNarrationReview.draft == currentDraft,
+                      self.loadedChapter?.scenes.first(where: { $0.id == changed.id })?.narration == changed.narration else { return }
                 do {
-                    try await self.baserowSceneService.updateScene(
-                        changed,
-                        rowID: rowID,
-                        baseURL: self.baserowBaseURL,
-                        token: self.baserowToken,
-                        tableID: self.baserowTableID,
-                        part: self.baserowPartBySceneID[changed.id],
-                        scriptID: self.baserowScriptIDsBySceneID[changed.id],
-                        sceneNumber: self.baserowOriginalSceneNumbersBySceneID[changed.id]
-                    )
-                    self.baserowRevision = ""
-                    self.statusMessage = "Scene \(changed.sceneNumber) saved to Baserow."
-                } catch {
-                    self.statusMessage = "Baserow save failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
-                }
+                    try await self.guidedNarrationReview.replaceCurrentSceneWording(changed.narration)
+                } catch { self.statusMessage = error.localizedDescription }
             }
-        } catch {
-            statusMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+        // A queued edit belongs to the connection and row where it was made.
+        let baseURL = baserowBaseURL, token = baserowToken, tableID = baserowTableID
+        enqueueSceneSave(changed, rowID: rowID) { [baserowSceneService] in
+            try await baserowSceneService.saveSceneContent(changed, rowID: rowID, baseURL: baseURL, token: token, tableID: tableID)
         }
     }
+
+    private func enqueueSceneSave(_ scene: NarrationScene, rowID: Int, write: @escaping @MainActor () async throws -> Void) {
+        let previous = sceneSaveTask
+        let id = UUID()
+        latestSceneSave[rowID] = id
+        failedSceneSaves.removeValue(forKey: scene.id)
+        retrySceneSaves.removeValue(forKey: scene.id)
+        statusMessage = "Saving Scene \(scene.sceneNumber) to Baserow…"
+        sceneSaveTask = Task {
+            await previous?.value
+            guard latestSceneSave[rowID] == id else { return }
+            do {
+                try await write()
+                baserowRevision = ""
+                if latestSceneSave[rowID] == id { statusMessage = "Scene \(scene.sceneNumber) saved to Baserow." }
+            } catch {
+                guard latestSceneSave[rowID] == id else { return }
+                failedSceneSaves[scene.id] = error.localizedDescription
+                retrySceneSaves[scene.id] = { [weak self] in self?.enqueueSceneSave(scene, rowID: rowID, write: write) }
+                statusMessage = "Baserow save failed: \(error.localizedDescription)"
+            }
+            if latestSceneSave[rowID] == id { latestSceneSave.removeValue(forKey: rowID) }
+        }
+    }
+
+    func retrySceneSave(_ sceneID: String) { retrySceneSaves[sceneID]?() }
 
     private func applyPendingChapterReloadIfNeeded() {
         guard let url = pendingChapterReloadURL else { return }

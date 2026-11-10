@@ -279,6 +279,24 @@ struct GuidedAudioReviewCheck {
         try await send("chapterTakeCompleted", draft: jump[0])
         review.end()
         print("PASS: deferred row selection during recording and backward jump with pending checkpoint")
+        // A wording edit during capture belongs to a new take on the same row.
+        let editQueue = chapter.map { GuidedNarrationDraft(sessionID: UUID(), sceneID: $0.sceneID, revision: 1, narration: $0.narration) }
+        try await review.beginChapter(editQueue)
+        review.approve()
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        review.approve()
+        let originalTake = review.audioDecision!
+        review.practiceSummary = { ["phase": "recording"] }
+        try await review.replaceCurrentSceneWording("First edit.")
+        try await review.replaceCurrentSceneWording("Final edit.")
+        precondition(review.draft == originalTake.draft)
+        precondition(review.remainingChapterScenes?.map(\.sceneID) == editQueue.map(\.sceneID))
+        await review.guidedTakeFinished(originalTake)
+        precondition(review.draft?.sceneID == editQueue[0].sceneID && review.draft?.narration == "Final edit.")
+        precondition(review.draft?.sessionID != originalTake.draft.sessionID && review.audioReview == nil && review.decision == nil)
+        precondition(review.pendingEndingSessionID == originalTake.draft.sessionID)
+        review.end()
+        print("PASS: same-row wording edits during capture restart once with the latest wording after the take")
         // Backward-compatible decoding when earlier snapshots have no audio fields.
         var old = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("status.json"))) as! [String: Any]
         for key in ["audioReview", "audioDecision", "audioAcknowledged", "audioBusy"] { old.removeValue(forKey: key) }

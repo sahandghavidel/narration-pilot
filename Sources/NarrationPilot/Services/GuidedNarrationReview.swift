@@ -500,6 +500,17 @@ final class GuidedNarrationReview: ObservableObject {
         try await loadChapterScenes(scenes, replacing: true)
     }
 
+    func replaceCurrentSceneWording(_ narration: String) async throws {
+        guard active, let draft, var remaining = remainingChapterScenes else { return }
+        // Successive saves during a take replace its queued retake.
+        if remaining.first?.sceneID == draft.sceneID { remaining.removeFirst() }
+        else if let candidate = nextCandidate, remaining.first?.sceneID == candidate.sceneID {
+            remaining[0] = candidate
+        }
+        let replacement = GuidedNarrationDraft(sessionID: UUID(), sceneID: draft.sceneID, revision: 1, narration: narration)
+        try await loadChapterScenes([replacement] + remaining, replacing: true)
+    }
+
     private func loadChapterScenes(_ scenes: [GuidedNarrationDraft], replacing: Bool) async throws {
         guard let first = scenes.first,
               scenes.allSatisfy({ !$0.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.narration.count <= 12000 }) else {

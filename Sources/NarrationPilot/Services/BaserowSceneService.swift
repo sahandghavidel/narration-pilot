@@ -107,9 +107,21 @@ final class BaserowSceneService {
         scriptIDs: [Int]? = nil,
         sceneNumber: Int? = nil
     ) async throws {
+        var fields = contentFields(scene)
+        fields["Scene Number"] = sceneNumber ?? scene.sceneNumber
+        if let part, !part.isEmpty { fields["Part"] = part }
+        if let scriptIDs { fields["Script"] = scriptIDs }
+        else if let scriptID { fields["Script"] = [scriptID] }
+        try await patchRow(rowID, fields: fields, baseURL: baseURL, token: token, tableID: tableID)
+    }
+
+    func saveSceneContent(_ scene: NarrationScene, rowID: Int, baseURL: String, token: String, tableID: String) async throws {
+        try await patchRow(rowID, fields: contentFields(scene), baseURL: baseURL, token: token, tableID: tableID)
+    }
+
+    private func contentFields(_ scene: NarrationScene) -> [String: Any] {
         let code = scene.code
-        var fields: [String: Any] = [
-            "Scene Number": sceneNumber ?? scene.sceneNumber,
+        return [
             "Narration": scene.narration,
             "On Screen": scene.onScreen,
             "Annotation": scene.annotation ?? "",
@@ -118,9 +130,9 @@ final class BaserowSceneService {
             "Target File": code?.targetFile ?? "",
             "Code Instruction": code?.instruction ?? ""
         ]
-        if let part, !part.isEmpty { fields["Part"] = part }
-        if let scriptIDs { fields["Script"] = scriptIDs }
-        else if let scriptID { fields["Script"] = [scriptID] }
+    }
+
+    private func patchRow(_ rowID: Int, fields: [String: Any], baseURL: String, token: String, tableID: String) async throws {
         _ = try await request(
             baseURL: baseURL,
             path: "/api/database/rows/table/\(clean(tableID))/\(rowID)/",

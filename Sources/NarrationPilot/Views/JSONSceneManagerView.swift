@@ -293,6 +293,12 @@ struct JSONSceneManagerView: View {
 
             annotationField
 
+            if let failure = appModel.failedSceneSaves[scene.id] {
+                HStack {
+                    Text(failure).font(.caption)
+                    Button("Retry Baserow Save") { appModel.retrySceneSave(scene.id) }
+                }
+            }
             Text(appModel.statusMessage)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -347,7 +353,11 @@ struct JSONSceneManagerView: View {
         }
         .background(
             WindowOutsideEditorClickMonitor {
-                if activeField != nil || hasUnsavedChanges {
+                guard activeField != nil || hasUnsavedChanges else { return nil }
+                let field = activeField, sceneID = scene.id
+                return {
+                    guard workingChapter.scenes.indices.contains(selectedIndex),
+                          workingChapter.scenes[selectedIndex].id == sceneID, activeField == field else { return }
                     _ = commitEdits()
                 }
             }
@@ -746,7 +756,7 @@ struct JSONSceneManagerView: View {
     }
 
     @discardableResult
-    private func saveChanges() -> Bool {
+    private func saveChanges(restartGuidedReview: Bool = true) -> Bool {
         let selectedSceneID = workingChapter.scenes[selectedIndex].id
         let baseChapter = pendingSourceChapter ?? workingChapter
         guard let targetIndex = baseChapter.scenes.firstIndex(where: { $0.id == selectedSceneID }) else {
@@ -779,8 +789,7 @@ struct JSONSceneManagerView: View {
                 updatedChapter,
                 allowsEmptySceneContent: appModel.scriptInputFormat == .baserow
             )
-            let data = try JSONEncoder.narrationPilot.encode(updatedChapter)
-            appModel.saveEditedChapterJSON(String(data: data, encoding: .utf8) ?? "")
+            try appModel.saveEditedChapter(updatedChapter, restartGuidedReview: restartGuidedReview)
             workingChapter = updatedChapter
             selectedIndex = targetIndex
             pendingSourceChapter = nil
@@ -793,13 +802,13 @@ struct JSONSceneManagerView: View {
         }
     }
 
-    private func commitEdits() -> Bool {
+    private func commitEdits(restartGuidedReview: Bool = true) -> Bool {
         guard hasUnsavedChanges else {
             activeField = nil
             focusedField = nil
             return true
         }
-        return saveChanges()
+        return saveChanges(restartGuidedReview: restartGuidedReview)
     }
 
     private var hasUnsavedChanges: Bool {
@@ -902,7 +911,8 @@ struct JSONSceneManagerView: View {
 
     private func select(_ index: Int, autoplayNarration: Bool = false) {
         if appModel.isReviewingBaserowChapter {
-            guard workingChapter.scenes.indices.contains(index), commitEdits() else { return }
+            guard workingChapter.scenes.indices.contains(index),
+                  commitEdits(restartGuidedReview: index == selectedIndex) else { return }
             let sceneID = workingChapter.scenes[index].id
             Task { await appModel.chooseGuidedScene(sceneID) }
             return
@@ -1036,7 +1046,7 @@ private struct SceneArrowKeyMonitor: NSViewRepresentable {
 }
 
 private struct WindowOutsideEditorClickMonitor: NSViewRepresentable {
-    let onOutsideClick: () -> Void
+    let onOutsideClick: () -> (@MainActor () -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onOutsideClick: onOutsideClick)
@@ -1063,20 +1073,30 @@ private struct WindowOutsideEditorClickMonitor: NSViewRepresentable {
 
     final class Coordinator {
         weak var window: NSWindow?
-        var onOutsideClick: () -> Void
+        var onOutsideClick: () -> (@MainActor () -> Void)?
         private var monitor: Any?
+        private var pendingCommit: (@MainActor () -> Void)?
 
-        init(onOutsideClick: @escaping () -> Void) {
+        init(onOutsideClick: @escaping () -> (@MainActor () -> Void)?) {
             self.onOutsideClick = onOutsideClick
         }
 
         func start() {
             guard monitor == nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
                 guard let self, event.window === self.window else { return event }
+                if event.type == .leftMouseUp {
+                    if let commit = self.pendingCommit {
+                        // Let the clicked button commit and select its destination first.
+                        DispatchQueue.main.async { commit() }
+                    }
+                    self.pendingCommit = nil
+                    return event
+                }
+                self.pendingCommit = nil
                 let hitView = self.window?.contentView?.hitTest(event.locationInWindow)
                 if hitView is NSTextView { return event }
-                self.onOutsideClick()
+                self.pendingCommit = self.onOutsideClick()
                 return event
             }
         }
