@@ -398,7 +398,7 @@ commands, and the hands-free flow. The existing
 
 ### Record a Baserow chapter with A, G and M
 
-In **Guided Narration & Audio Review**, choose **Choose Baserow Chapter**, select the script, chapter and starting scene, pause FocuSee, and click **Start Chapter Review**. The guided picker uses your configured Baserow connection and loads the remaining narration in chapter order. It has its own selection, independent of the macOS reader.
+Select a Baserow scene in the JSON Scene Manager. The reader and **Guided Narration & Audio Review** share that selection. Pause FocuSee and click **Start Chapter Review** to review from the selected row through the end of its chapter. Selecting another row during review starts wording review from that row. A selection made during a take takes effect when the take finishes.
 
 Use **⌘⇧A** to approve wording or **⌘⇧G** to request a revision from the active agent. After the cloned voice preview, **⌘⇧G** regenerates the voice, **⌘⇧A** requests guided practice. During practice, **⌘⇧G** asks the agent to improve the screen actions and rehearse again with the approved voice. At voice preview, **⌘⇧M** or **⌃⇧M** records your own mouse and keyboard actions with that exact voice. Manual takes skip practice. Once the take finishes and FocuSee confirms pause, the app reads the next scene. The final take announces chapter completion. For guided takes, the app starts the next spoken prompt while the runner saves the ending screen. The next take or practice waits for that checkpoint. An active agent is needed for wording revisions and guided actions.
 

@@ -1511,11 +1511,12 @@ final class AppModel: ObservableObject {
 
             let deletedRowIDs = Set(recordsToDelete.map(\.rowID))
             let remainingRecords = scriptRecords.filter { !deletedRowIDs.contains($0.rowID) }
+            let firstNumber = remainingRecords.first?.originalSceneNumber == 0 ? 0 : 1
             for (index, record) in remainingRecords.enumerated()
-            where record.originalSceneNumber != index + 1 {
+            where record.originalSceneNumber != index + firstNumber {
                 try await baserowSceneService.updateSceneNumber(
                     rowID: record.rowID,
-                    sceneNumber: index + 1,
+                    sceneNumber: index + firstNumber,
                     baseURL: baserowBaseURL,
                     token: baserowToken,
                     tableID: baserowTableID
@@ -1916,6 +1917,8 @@ final class AppModel: ObservableObject {
     }
 
     private func requestSceneManagerSelection(sceneID: String) {
+        guard let index = loadedChapter?.scenes.firstIndex(where: { $0.id == sceneID }) else { return }
+        currentSceneIndex = index
         sceneManagerRequestedSceneID = sceneID
         sceneManagerSelectionRevision = UUID()
     }
@@ -2017,10 +2020,11 @@ final class AppModel: ObservableObject {
                 let scriptRecords = allRecords
                     .filter { $0.scriptIDs.contains(selectedScriptID) }
                     .sorted { $0.originalSceneNumber < $1.originalSceneNumber }
+                let firstNumber = scriptRecords.first?.originalSceneNumber == 0 ? 0 : 1
                 for (index, record) in scriptRecords.enumerated()
-                where record.originalSceneNumber != index + 1 {
+                where record.originalSceneNumber != index + firstNumber {
                     throw BaserowSceneError.invalidScenes(
-                        "Script scenes must use continuous Scene Numbers. Expected \(index + 1), found \(record.originalSceneNumber)."
+                        "Script scenes must use continuous Scene Numbers. Expected \(index + firstNumber), found \(record.originalSceneNumber)."
                     )
                 }
             }
@@ -2110,6 +2114,10 @@ final class AppModel: ObservableObject {
             refreshScriptScenes()
             if let previousSceneID, let index = chapter.scenes.firstIndex(where: { $0.id == previousSceneID }) {
                 currentSceneIndex = index
+            }
+            if guidedNarrationReview.active, guidedNarrationReview.remainingChapterScenes != nil,
+               let sceneID = guidedNarrationReview.draft?.sceneID {
+                requestSceneManagerSelection(sceneID: sceneID)
             }
             saveBaserowCache(chapter)
             statusMessage = "Baserow synced. \(scriptSceneProgress)"
@@ -3339,16 +3347,47 @@ final class AppModel: ObservableObject {
         } catch { approvedAudioRecording.report(error.localizedDescription) }
     }
 
-    func loadGuidedBaserowChoices() async throws -> ([BaserowScriptRecord], [BaserowSceneRecord]) {
-        let scripts = try await baserowSceneService.fetchScripts(baseURL: baserowBaseURL, token: baserowToken, tableID: baserowScriptsTableID)
-        let rows = try await baserowSceneService.fetchScenes(baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID)
-        return (scripts, rows)
+    struct GuidedSceneSelection: Equatable {
+        let script: Int
+        let part: String?
+        let startRow: Int
+        let label: String
     }
 
-    func startBaserowReview(script: Int, part: String, startRow: Int) async throws {
+    var guidedSceneSelection: GuidedSceneSelection? {
+        guard scriptModeEnabled, scriptInputFormat == .baserow, isBaserowConnected,
+              let scene = currentNarrationScene,
+              let rowID = baserowRowIDsBySceneID[scene.id],
+              let title = baserowScripts.first(where: { $0.rowID == baserowSelectedScriptID })?.title
+        else { return nil }
+        let part = baserowPartBySceneID[scene.id]
+        let label = [title, part, "Scene \(scene.sceneNumber)"].compactMap { $0 }.joined(separator: " · ")
+        return GuidedSceneSelection(script: baserowSelectedScriptID, part: part, startRow: rowID, label: label)
+    }
+
+    var isReviewingBaserowChapter: Bool {
+        scriptInputFormat == .baserow && guidedNarrationReview.active && guidedNarrationReview.remainingChapterScenes != nil
+    }
+
+    func chooseGuidedScene(_ sceneID: String) async {
+        guard isReviewingBaserowChapter, !isBaserowSyncing,
+              let scenes = loadedChapter?.scenes,
+              let index = scenes.firstIndex(where: { $0.id == sceneID }) else { return }
+        let part = baserowPartBySceneID[sceneID]
+        let drafts = scenes[index...].filter { baserowPartBySceneID[$0.id] == part }.map {
+            GuidedNarrationDraft(sessionID: UUID(), sceneID: $0.id, revision: 1, narration: $0.narration)
+        }
+        do {
+            try await guidedNarrationReview.selectChapterScenes(drafts)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func startBaserowReview(_ selection: GuidedSceneSelection) async throws {
         let rows = try await baserowSceneService.fetchScenes(baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID)
-            .filter { $0.scriptIDs.contains(script) && $0.part == part }
-        guard let index = rows.firstIndex(where: { $0.rowID == startRow }) else {
+            .filter { $0.scriptIDs.contains(selection.script) && $0.part == selection.part }
+        guard let index = rows.firstIndex(where: { $0.rowID == selection.startRow }) else {
             throw BaserowSceneError.invalidScenes("The selected Baserow scene changed. Reload the scene list.")
         }
         guard Set(rows.map(\.originalSceneNumber)).count == rows.count else {
@@ -3356,6 +3395,9 @@ final class AppModel: ObservableObject {
         }
         guard await clonedFocuSeeControl.sample() == .paused else {
             throw BaserowSceneError.invalidScenes("Pause the active FocuSee recording before starting the chapter.")
+        }
+        guard selection == guidedSceneSelection, !isBaserowSyncing else {
+            throw BaserowSceneError.invalidScenes("The selected scene changed. Start review from the current selection.")
         }
         try await guidedNarrationReview.beginChapter(rows[index...].map {
             GuidedNarrationDraft(sessionID: UUID(), sceneID: $0.scene.id, revision: 1, narration: $0.scene.narration)
@@ -3375,6 +3417,11 @@ final class AppModel: ObservableObject {
     }
 
     private func configureGuidedNarrationReview() {
+        guidedNarrationReview.onChapterSceneSelected = { [weak self] sceneID in
+            guard let self, self.scriptInputFormat == .baserow else { return }
+            self.requestSceneManagerSelection(sceneID: sceneID)
+            self.presenterOverlayController?.updateLayout()
+        }
         guidedNarrationReview.recordManualAudio = { [weak self] approval in
             guard let self else { throw CancellationError() }
             let prepared = try self.clonedClipboardAudio.approvedAudio(narration: approval.draft.narration, voiceID: approval.audio.voice.id)

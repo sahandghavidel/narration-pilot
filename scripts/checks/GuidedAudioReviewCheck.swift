@@ -136,6 +136,8 @@ struct GuidedAudioReviewCheck {
             precondition(approval.audio.versionID == firstAudio)
             if manualCalls == 1 { throw NSError(domain: "PauseCheck", code: 1) }
         }
+        var selectedScenes: [String] = []
+        review.onChapterSceneSelected = { selectedScenes.append($0) }
         try await review.beginChapter(chapter)
         review.improve()
         var revised = chapter[0]; revised.narration = "Revised first scene."; revised.revision = 2
@@ -154,6 +156,8 @@ struct GuidedAudioReviewCheck {
         review.recordMyself()
         try await waitFor { !review.active }
         precondition(manualCalls == 3 && review.message == "Recording completed for this chapter.")
+        precondition(selectedScenes == chapter.map(\.sceneID), "Manual takes should follow each selected row exactly once")
+        selectedScenes = []
         // Pause and successful action completion advance speech before the runner saves its image.
         var freshChapter = chapter.map { GuidedNarrationDraft(sessionID: UUID(), sceneID: $0.sceneID, revision: 1, narration: $0.narration) }
         freshChapter.append(GuidedNarrationDraft(sessionID: UUID(), sceneID: "final", revision: 1, narration: "Ready for the first task."))
@@ -197,9 +201,29 @@ struct GuidedAudioReviewCheck {
         await review.guidedTakeFinished(lastApproval)
         await review.guidedTakeFinished(lastApproval)
         precondition(!review.active && chapterAnnouncements == 1)
+        precondition(selectedScenes == freshChapter.map(\.sceneID), "Guided takes should follow each selected row exactly once")
         try await send("chapterTakeCompleted", draft: freshChapter[2])
         precondition(chapterAnnouncements == 1 && review.pendingEndingSessionID == nil)
         print("PASS: next prompt before ending screenshot; pause-to-prompt request under 500 ms; chapter completion spoken once")
+        let jump = freshChapter.map { GuidedNarrationDraft(sessionID: UUID(), sceneID: $0.sceneID, revision: 1, narration: $0.narration) }
+        try await review.beginChapter(jump)
+        review.approve()
+        try await waitFor { review.phase == "audioReady" && !review.audioBusy }
+        review.approve()
+        let recording = review.audioDecision!
+        review.practiceSummary = { ["phase": "recording"] }
+        try await review.selectChapterScenes([jump[2]])
+        precondition(review.draft == jump[0] && review.remainingChapterScenes == [jump[2]])
+        await review.guidedTakeFinished(recording)
+        precondition(review.draft == jump[2])
+        review.practiceSummary = { nil }
+        let revisited = GuidedNarrationDraft(sessionID: UUID(), sceneID: jump[0].sceneID, revision: 1, narration: jump[0].narration)
+        try await review.selectChapterScenes([revisited])
+        precondition(review.draft == revisited && review.decision == nil && review.audioReview == nil)
+        precondition(review.pendingEndingSessionID == jump[0].sessionID)
+        try await send("chapterTakeCompleted", draft: jump[0])
+        review.end()
+        print("PASS: deferred row selection during recording and backward jump with pending checkpoint")
         // Backward-compatible decoding when earlier snapshots have no audio fields.
         var old = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("status.json"))) as! [String: Any]
         for key in ["audioReview", "audioDecision", "audioAcknowledged", "audioBusy"] { old.removeValue(forKey: key) }

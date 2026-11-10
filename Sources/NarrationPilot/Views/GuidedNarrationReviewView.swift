@@ -12,7 +12,7 @@ struct GuidedNarrationReviewView: View {
                         Text("Saving the final scene’s ending screen…")
                         Button("End Without Ending Checkpoint") { review.end() }
                     } else {
-                        GuidedChapterPicker()
+                        GuidedSceneSelection()
                     }
                 }
                 Text(review.active ? "Review \(reviewingAudio ? "audio" : "narration") · \(review.phase)" : "Guided review inactive").font(.subheadline.bold())
@@ -49,7 +49,11 @@ struct GuidedNarrationReviewView: View {
                         Button("End Guided Review") { review.end() }
                     }
                 }
-                KeyboardShortcuts.Recorder("Approve wording / audio / practice", name: .approveClonedClipboardAudio)
+                HStack {
+                    KeyboardShortcuts.Recorder("Approve wording / audio / practice", name: .approveClonedClipboardAudio)
+                    Button("Use ⇧⌘A") { KeyboardShortcuts.reset(.approveClonedClipboardAudio) }
+                        .help("Restore Command-Shift-A for approval")
+                }
                 KeyboardShortcuts.Recorder("Improve / regenerate / improve practice", name: .regenerateClonedClipboardAudio)
                 KeyboardShortcuts.Recorder("Record myself", name: .recordGuidedManually)
                 KeyboardShortcuts.Recorder("Record myself (alternate)", name: .recordGuidedManuallyAlternate)
@@ -60,64 +64,32 @@ struct GuidedNarrationReviewView: View {
     }
 }
 
-private struct GuidedChapterPicker: View {
+private struct GuidedSceneSelection: View {
     @EnvironmentObject private var appModel: AppModel
-    @State private var scripts: [BaserowScriptRecord] = []
-    @State private var rows: [BaserowSceneRecord] = []
-    @State private var scriptID = 0
-    @State private var part = ""
-    @State private var rowID = 0
     @State private var busy = false
     @State private var issue = ""
 
-    private var parts: [String] {
-        Set(rows.filter { $0.scriptIDs.contains(scriptID) }.compactMap(\.part)).sorted {
-            $0.localizedStandardCompare($1) == .orderedAscending
-        }
-    }
-    private var scenes: [BaserowSceneRecord] { rows.filter { $0.scriptIDs.contains(scriptID) && $0.part == part } }
-
     var body: some View {
         VStack(alignment: .leading) {
-            Button(scripts.isEmpty ? "Choose Baserow Chapter" : "Reload Baserow Chapters") {
-                Task { await load() }
-            }
-            if !scripts.isEmpty {
-                Picker("Script", selection: $scriptID) {
-                    ForEach(scripts) { Text($0.title).tag($0.rowID) }
-                }.onChange(of: scriptID) { selectFirstPart() }
-                Picker("Chapter", selection: $part) {
-                    ForEach(parts, id: \.self) { Text($0).tag($0) }
-                }.onChange(of: part) { rowID = scenes.first?.rowID ?? 0 }
-                Picker("Start at", selection: $rowID) {
-                    ForEach(scenes, id: \.rowID) { Text("Scene \($0.originalSceneNumber)").tag($0.rowID) }
-                }
+            if let selection = appModel.guidedSceneSelection {
+                Text(selection.label).font(.subheadline.bold())
                 Button("Start Chapter Review") {
                     Task {
-                        busy = true; issue = ""
+                        busy = true
+                        issue = ""
                         defer { busy = false }
-                        do { try await appModel.startBaserowReview(script: scriptID, part: part, startRow: rowID) }
+                        do { try await appModel.startBaserowReview(selection) }
                         catch { issue = error.localizedDescription }
                     }
-                }.disabled(rowID == 0)
+                }
+            } else {
+                Text("Connect Baserow and select a scene in the Scene Manager.")
+                    .font(.caption)
             }
+            Button("Open Scene Manager") { appModel.openCurrentSceneEditor() }
             if !issue.isEmpty { Text(issue).font(.caption) }
-        }.disabled(busy)
-    }
-
-    private func selectFirstPart() {
-        part = parts.first ?? ""
-        rowID = scenes.first?.rowID ?? 0
-    }
-
-    private func load() async {
-        busy = true; issue = ""
-        defer { busy = false }
-        do {
-            (scripts, rows) = try await appModel.loadGuidedBaserowChoices()
-            if !scripts.contains(where: { $0.rowID == scriptID }) { scriptID = scripts.first?.rowID ?? 0 }
-            selectFirstPart()
-            if scripts.isEmpty { issue = "No Baserow scripts found." }
-        } catch { issue = error.localizedDescription }
+        }
+        .disabled(busy || appModel.isBaserowSyncing)
+        .onChange(of: appModel.guidedSceneSelection) { issue = "" }
     }
 }

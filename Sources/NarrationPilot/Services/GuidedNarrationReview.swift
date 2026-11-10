@@ -117,6 +117,7 @@ final class GuidedNarrationReview: ObservableObject {
     var recordManualAudio: ((GuidedAudioDecision) async throws -> Void)?
     var cancelManualRecording: () -> Void = {}
     private var manualTask: Task<Void, Never>?
+    var onChapterSceneSelected: (String) -> Void = { _ in }
     var onAudioApproved: ((GuidedAudioDecision) -> Void)?
     var onEnd: () -> Void = {}
     var onInterrupt: () -> Void = {}
@@ -425,9 +426,32 @@ final class GuidedNarrationReview: ObservableObject {
 
     func beginChapter(_ scenes: [GuidedNarrationDraft]) async throws {
         guard pendingEndingSessionID == nil else { throw error("Waiting for the previous chapter’s final screen to be saved.") }
-        guard !active, let first = scenes.first,
+        guard !active else { throw error("End the active review before starting a chapter.") }
+        try await loadChapterScenes(scenes, replacing: false)
+    }
+
+    func selectChapterScenes(_ scenes: [GuidedNarrationDraft]) async throws {
+        guard active, remainingChapterScenes != nil, draft?.sceneID != scenes.first?.sceneID else { return }
+        try await loadChapterScenes(scenes, replacing: true)
+    }
+
+    private func loadChapterScenes(_ scenes: [GuidedNarrationDraft], replacing: Bool) async throws {
+        guard let first = scenes.first,
               scenes.allSatisfy({ !$0.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.narration.count <= 12000 }) else {
-            throw error("Select a chapter with narration in every remaining scene and end any active review.")
+            throw error("Each remaining scene needs valid narration before review can start.")
+        }
+        if replacing {
+            let practicePhase = practiceSummary()?["phase"] ?? ""
+            if phase == "manualRecording" || ["recording", "waitingForRecordActions", "completed"].contains(practicePhase) {
+                remainingChapterScenes = scenes
+                nextCandidate = nil
+                message = "The selected scene will start after this take."
+                publish()
+                return
+            }
+            let checkpoint = pendingEndingSessionID
+            end()
+            pendingEndingSessionID = checkpoint
         }
         remainingChapterScenes = Array(scenes.dropFirst())
         try await readChapterScene(first)
@@ -583,7 +607,9 @@ final class GuidedNarrationReview: ObservableObject {
             nextCandidate = command.nextCandidate
             generation = UUID(); cancelAudio(); stopOwnedSpeech()
             audioReview = nil; audioDecision = nil; audioAcknowledged = false
+            let enteringChapterScene = remainingChapterScenes != nil && draft?.sessionID != next.sessionID
             draft = next; active = true; decision = nil; acknowledged = false; checkingSpeech = false
+            if enteringChapterScene { onChapterSceneSelected(next.sceneID) }
             phase = "ready"; message = "Narration received. Preparing the spoken review."; publish()
             await replay()
         case "acknowledge":

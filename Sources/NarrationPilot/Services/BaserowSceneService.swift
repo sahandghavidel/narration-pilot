@@ -227,7 +227,7 @@ final class BaserowSceneService {
         let narration = string(row["Narration"])
         let onScreen = string(row["On Screen"])
 
-        guard let sceneNumber = integer(row["Scene Number"]), sceneNumber > 0 else {
+        guard let sceneNumber = integer(row["Scene Number"]), sceneNumber >= 0 else {
             throw BaserowSceneError.invalidScenes("A Baserow row is missing a valid Scene Number.")
         }
 

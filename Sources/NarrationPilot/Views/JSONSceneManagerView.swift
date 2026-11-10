@@ -98,7 +98,13 @@ struct JSONSceneManagerView: View {
         .onReceive(appModel.$sceneManagerSelectionRevision.dropFirst()) { _ in
             guard let sceneID = appModel.sceneManagerRequestedSceneID,
                   let index = workingChapter.scenes.firstIndex(where: { $0.id == sceneID }) else { return }
-            applySelection(index, autoplayNarration: false, animatedScroll: false)
+            // A model-driven move can arrive while FocuSee owns keyboard focus.
+            if selectedIndex != index {
+                guard commitEdits() else { return }
+                selectedIndex = index
+                loadDraft()
+            }
+            requestSelectedSceneScroll(animated: false)
         }
         .onDisappear {
             if audioExporter.isExporting { audioExporter.cancel() }
@@ -207,7 +213,7 @@ struct JSONSceneManagerView: View {
                                 if appModel.isSceneManagerNarrationQueuePlaying {
                                     appModel.stopSceneManagerNarrationQueue()
                                 }
-                                applySelection(index, autoplayNarration: false, animatedScroll: true)
+                                select(index)
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack(spacing: 5) {
@@ -895,6 +901,12 @@ struct JSONSceneManagerView: View {
     }
 
     private func select(_ index: Int, autoplayNarration: Bool = false) {
+        if appModel.isReviewingBaserowChapter {
+            guard workingChapter.scenes.indices.contains(index), commitEdits() else { return }
+            let sceneID = workingChapter.scenes[index].id
+            Task { await appModel.chooseGuidedScene(sceneID) }
+            return
+        }
         applySelection(index, autoplayNarration: autoplayNarration, animatedScroll: true)
     }
 
