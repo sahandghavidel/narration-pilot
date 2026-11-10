@@ -134,6 +134,8 @@ final class GuidedNarrationReview: ObservableObject {
     var stopSpeech: () -> Void = {}
 
     let directory: URL
+    private let inbox = GuidedCommandInbox()
+    private var scanRequested = false
     private var timer: Timer?
     private var processing = false
     private var checkingSpeech = false
@@ -143,7 +145,6 @@ final class GuidedNarrationReview: ObservableObject {
     private var audioOperationID: UUID?
     private var running = false
     private var generation = UUID()
-    private var lastHeartbeat = Date.distantPast
 
     static func encoder() -> JSONEncoder {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; return encoder
@@ -186,17 +187,30 @@ final class GuidedNarrationReview: ObservableObject {
     }
 
     func start() {
-        guard timer == nil else { return }
+        guard !running else { return }
         running = true
         publish()
-        timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.processInbox() }
+        watchInbox()
+        timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.publish()
+                self?.watchInbox()
+            }
         }
         if let timer { RunLoop.main.add(timer, forMode: .common) }
     }
 
+    private func watchInbox() {
+        inbox.watch(directory.appendingPathComponent("commands")) { [weak self] in
+            Task { @MainActor in
+                guard let self, self.running else { return }
+                await self.processInbox()
+            }
+        }
+    }
+
     func stop() {
-        running = false; timer?.invalidate(); timer = nil
+        running = false; inbox.stop(); timer?.invalidate(); timer = nil
         interruptSpeech()
         publish()
     }
@@ -558,12 +572,18 @@ final class GuidedNarrationReview: ObservableObject {
     }
 
     func processInbox() async {
+        scanRequested = true
         guard !processing else { return }
         processing = true
         defer { processing = false }
-        if Date().timeIntervalSince(lastHeartbeat) >= 1 { publish(); lastHeartbeat = Date() }
-        let files = ((try? FileManager.default.contentsOfDirectory(at: directory.appendingPathComponent("commands"), includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
-            .filter { $0.pathExtension == "json" }
+        repeat {
+            scanRequested = false
+            await drainPendingCommands()
+        } while scanRequested
+    }
+
+    private func drainPendingCommands() async {
+        let files = GuidedCommandInbox.pendingFiles(in: directory)
             .sorted { ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) < ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
         for file in files {
             guard UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil else { continue }

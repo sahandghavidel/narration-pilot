@@ -36,7 +36,6 @@ import Foundation
             bridge.recordAudio = { _ in GuidedPracticeRecordingResult(sessionID: UUID(), duration: 4.6, message: "Fixture recording completed.") }
             bridge.start(); bridge.begin(decision)
             for _ in 0..<1000 {
-                await bridge.processInbox()
                 if bridge.phase == "practiceReady" { bridge.approve() }
                 if FileManager.default.fileExists(atPath: root.appendingPathComponent("quit").path) { bridge.stop(); return }
                 try await Task.sleep(for: .milliseconds(20))
@@ -81,7 +80,9 @@ import Foundation
                 runID: run ?? practice.runID!, kind: kind, plan: plan, gate: gate, results: results)
             let path = root.appendingPathComponent("commands/\(command.id.uuidString).json")
             try GuidedNarrationReview.encoder().encode(command).write(to: path, options: .atomic)
-            await practice.processInbox()
+            practice.start() // The first command is already on disk when the watcher starts.
+            let receipt = root.appendingPathComponent("receipts").appendingPathComponent(path.lastPathComponent)
+            try await waitFor { FileManager.default.fileExists(atPath: receipt.path) }
             let result = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("receipts/\(path.lastPathComponent)"))) as! [String: Any]
             precondition(result["accepted"] as? Bool == accepted, result.description)
             return command

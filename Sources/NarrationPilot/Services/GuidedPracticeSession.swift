@@ -124,7 +124,7 @@ struct GuidedPracticeSnapshot: Codable {
 final class GuidedPracticeSession: ObservableObject {
     nonisolated static let directory = GuidedNarrationReview.directory.appendingPathComponent("Practice")
     @Published private(set) var active = false
-    @Published private(set) var phase = "inactive"
+    @Published private(set) var phase = "inactive" { didSet { updateClockTimer() } }
     @Published private(set) var message = "No guided practice is active."
     @Published private(set) var approval: GuidedAudioDecision?
     @Published private(set) var runID: UUID?
@@ -158,6 +158,8 @@ final class GuidedPracticeSession: ObservableObject {
     private var recordActionsFinished = false
     private var recordActionResults: [GuidedPracticeActionResult] = []
     private var audioEndedAt: Double?
+    private let inbox = GuidedCommandInbox()
+    private var scanRequested = false
     private var timer: Timer?
     private var worker: Task<Void, Never>?
     private var operationID: UUID?
@@ -184,17 +186,37 @@ final class GuidedPracticeSession: ObservableObject {
     }
 
     func start() {
-        guard timer == nil else { return }
-        running = true; publish()
-        timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.processInbox()
+        guard !running else { return }
+        running = true
+        publish()
+        watchInbox()
+        updateClockTimer()
+    }
+
+    private func updateClockTimer() {
+        guard running else { return }
+        let interval: TimeInterval = ["practicing", "waitingForActions", "recording"].contains(phase) ? 0.1 : 1
+        guard timer?.timeInterval != interval else { return }
+        timer?.invalidate()
+        timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.tick()
+                self?.watchInbox()
             }
         }
         if let timer { RunLoop.main.add(timer, forMode: .common) }
     }
 
-    func stop() { running = false; timer?.invalidate(); timer = nil; suspend(pauseRecording: true) }
+    private func watchInbox() {
+        inbox.watch(directory.appendingPathComponent("commands")) { [weak self] in
+            Task { @MainActor in
+                guard let self, self.running else { return }
+                await self.processInbox()
+            }
+        }
+    }
+
+    func stop() { running = false; inbox.stop(); timer?.invalidate(); timer = nil; suspend(pauseRecording: true) }
 
     func begin(_ decision: GuidedAudioDecision) {
         cancelWork(pauseRecording: true)
@@ -416,10 +438,20 @@ final class GuidedPracticeSession: ObservableObject {
     }
 
     func processInbox() async {
-        guard !processing else { return }; processing = true; defer { processing = false }
+        scanRequested = true
+        guard !processing else { return }
+        processing = true
+        defer { processing = false }
+        repeat {
+            scanRequested = false
+            await drainPendingCommands()
+        } while scanRequested
+    }
+
+    private func drainPendingCommands() async {
         tick()
-        let files = ((try? FileManager.default.contentsOfDirectory(at: directory.appendingPathComponent("commands"), includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
-            .filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let files = GuidedCommandInbox.pendingFiles(in: directory)
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
         for file in files {
             guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent) else { continue }
             let receipt = directory.appendingPathComponent("receipts/\(file.lastPathComponent)")

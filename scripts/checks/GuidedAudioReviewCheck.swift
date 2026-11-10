@@ -14,7 +14,6 @@ struct GuidedAudioReviewCheck {
             bridge.approveAudioVersion = { _, _, _ in }
             bridge.start()
             for _ in 0..<600 {
-                await bridge.processInbox()
                 if bridge.phase == "awaitingDecision" { bridge.approve() }
                 if bridge.phase == "audioReady", !bridge.audioBusy {
                     if bridge.audioReview?.attempt == 1 { bridge.improve() } else { bridge.approve() }
@@ -52,7 +51,9 @@ struct GuidedAudioReviewCheck {
         func send(_ kind: String, draft: GuidedNarrationDraft, eventID: UUID? = nil, next: GuidedNarrationDraft? = nil, accepted: Bool = true) async throws {
             let c = GuidedNarrationCommand(id: UUID(), sessionID: draft.sessionID, kind: kind, draft: kind == "submit" ? draft : nil, eventID: eventID, nextCandidate: next)
             try GuidedNarrationReview.encoder().encode(c).write(to: root.appendingPathComponent("commands/\(c.id.uuidString).json"), options: .atomic)
-            await review.processInbox()
+            review.start() // The first command is already on disk when the watcher starts.
+            let receipt = root.appendingPathComponent("receipts").appendingPathComponent(c.id.uuidString + ".json")
+            try await waitFor { FileManager.default.fileExists(atPath: receipt.path) }
             let r = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("receipts/\(c.id.uuidString).json"))) as! [String: Any]
             precondition(r["accepted"] as? Bool == accepted, r.description)
         }
