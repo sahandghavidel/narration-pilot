@@ -3,7 +3,7 @@
 import argparse
 import json
 from pathlib import Path
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageStat
 
 
 def caret_blink(delta, view):
@@ -33,7 +33,7 @@ def caret_blink(delta, view):
     return False
 
 
-def compare(baseline, current, masks=None, views=None):
+def compare(baseline, current, masks=None, views=None, tolerances=None):
     if set(baseline) != set(current):
         return dict(matched=False, reason='Observed app windows differ')
     details = {}
@@ -80,6 +80,14 @@ def compare(baseline, current, masks=None, views=None):
             bounds = None
         else:
             bounds = delta.getbbox()
+        tolerance = (tolerances or {}).get(app)
+        if bounds and tolerance and tolerance.get('reason'):
+            # User-requested small paint tolerance. AX still checks all content, focus and selected values.
+            histogram = delta.convert('L').histogram()
+            fraction = sum(histogram[33:]) / (delta.width * delta.height)
+            mean = max(ImageStat.Stat(delta).mean)
+            if fraction <= min(.002, tolerance.get('maxChangedFraction', 0)) and mean <= min(2, tolerance.get('maxMeanDelta', 0)):
+                bounds = None
         details[app] = bounds
     return dict(matched=all(v is None for v in details.values()), differences=details)
 
@@ -93,7 +101,7 @@ if __name__ == '__main__':
         checkpoint = args.manifest.with_name('baseline.json')
         saved = json.loads(checkpoint.read_text()) if checkpoint.exists() else {}
         views = saved.get('snapshot', {}).get('views') if saved.get('images') == values['baseline'] else None
-        print(json.dumps(compare(values['baseline'], values['current'], values.get('masks'), views)))
+        print(json.dumps(compare(values['baseline'], values['current'], values.get('masks'), views, values.get('visualTolerance'))))
     except (OSError, ValueError, KeyError) as error:
         print(json.dumps(dict(matched=False, reason=str(error))))
         raise SystemExit(1)
