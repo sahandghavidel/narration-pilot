@@ -22,27 +22,7 @@ struct GuidedNarrationReviewView: View {
                 if let draft = review.draft, review.active {
                     Text("\(draft.sceneID) · revision \(draft.revision)").font(.caption).foregroundStyle(.secondary)
                     Text(draft.narration).textSelection(.enabled)
-                    if let audio = review.audioReview {
-                        Text("\(audio.voice.name) · attempt \(audio.attempt)").font(.caption)
-                        if let duration = audio.duration {
-                            Text("Saved audio: \(duration, specifier: "%.2f") seconds").font(.caption).monospacedDigit()
-                        }
-                    }
-                    if review.audioBusy { ProgressView().controlSize(.small) }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 175))], alignment: .leading) {
-                        ForEach(GuidedAction.allCases.filter { $0.available(review, practice) }) { action in
-                            Button {
-                                action.perform(review, practice)
-                            } label: {
-                                HStack {
-                                    Text(action.rawValue)
-                                    if let shortcut = action.shortcut.shortcut {
-                                        Text(String(describing: shortcut)).foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    GuidedReviewActions(review: review, practice: practice)
                     Button("End Guided Review") { review.end() }
                 }
                 DisclosureGroup("Guided shortcuts") {
@@ -61,7 +41,80 @@ struct GuidedNarrationReviewView: View {
     }
 }
 
+private struct GuidedReviewActions: View {
+    @ObservedObject var review: GuidedNarrationReview
+    @ObservedObject var practice: GuidedPracticeSession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let audio = review.audioReview {
+                Text("\(audio.voice.name) · attempt \(audio.attempt)").font(.caption)
+                if let duration = audio.duration {
+                    Text("Saved audio: \(duration, specifier: "%.2f") seconds").font(.caption).monospacedDigit()
+                }
+            }
+            if review.audioBusy { ProgressView().controlSize(.small) }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 175))], alignment: .leading) {
+                ForEach(GuidedAction.allCases.filter { $0.available(review, practice) }) { action in
+                    Button {
+                        action.perform(review, practice)
+                    } label: {
+                        HStack {
+                            Text(action.rawValue)
+                            if let shortcut = action.shortcut.shortcut {
+                                Text(String(describing: shortcut)).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct SceneManagerGuidedReview: View {
+    @ObservedObject var review: GuidedNarrationReview
+    @ObservedObject var practice: GuidedPracticeSession
+    let scene: NarrationScene
+    let wordingEdited: Bool
+    let save: () -> Void
+
+    private var heading: String {
+        if !review.active { return "Guided Review" }
+        if practice.active { return "Practice and recording" }
+        if review.phase.hasPrefix("manual") { return "Manual recording" }
+        return review.decision?.kind == "approveNarration" ? "Review voice" : "Review wording"
+    }
+
+    var body: some View {
+        GroupBox(heading) {
+            VStack(alignment: .leading, spacing: 6) {
+                if wordingEdited {
+                    Button(review.active && review.remainingChapterScenes != nil && review.draft?.sceneID == scene.id ? "Save & hear changes" : "Save wording") { save() }
+                } else if !review.active {
+                    if review.pendingEndingSessionID != nil {
+                        Text("Saving the final scene’s ending screen…").font(.caption)
+                    } else {
+                        GuidedSceneSelection(popupSceneID: scene.id)
+                    }
+                } else if review.draft?.sceneID == scene.id, review.remainingChapterScenes != nil {
+                    Text(practice.active ? practice.message : review.message).font(.caption)
+                    if let draft = review.draft, draft.narration != scene.narration {
+                        Text("Current guided wording").font(.caption.bold())
+                        Text(draft.narration).textSelection(.enabled)
+                    }
+                    GuidedReviewActions(review: review, practice: practice)
+                    Button("End Guided Review") { review.end() }.controlSize(.small)
+                } else {
+                    Text("Guided Review is on another scene.").font(.caption)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
 private struct GuidedSceneSelection: View {
+    var popupSceneID: String? = nil
     @EnvironmentObject private var appModel: AppModel
     @State private var busy = false
     @State private var issue = ""
@@ -69,8 +122,8 @@ private struct GuidedSceneSelection: View {
     var body: some View {
         VStack(alignment: .leading) {
             if let selection = appModel.guidedSceneSelection {
-                Text(selection.label).font(.subheadline.bold())
-                Button("Start Chapter Review") {
+                if popupSceneID == nil { Text(selection.label).font(.subheadline.bold()) }
+                Button(popupSceneID == nil ? "Start Chapter Review" : "Start review from this scene") {
                     Task {
                         busy = true
                         issue = ""
@@ -83,10 +136,10 @@ private struct GuidedSceneSelection: View {
                 Text("Connect Baserow and select a scene in the Scene Manager.")
                     .font(.caption)
             }
-            Button("Open Scene Manager") { appModel.openCurrentSceneEditor() }
+            if popupSceneID == nil { Button("Open Scene Manager") { appModel.openCurrentSceneEditor() } }
             if !issue.isEmpty { Text(issue).font(.caption) }
         }
-        .disabled(busy || appModel.isBaserowSyncing)
+        .disabled(busy || appModel.isBaserowSyncing || (popupSceneID != nil && popupSceneID != appModel.currentNarrationScene?.id))
         .onChange(of: appModel.guidedSceneSelection) { issue = "" }
     }
 }

@@ -107,6 +107,7 @@ struct JSONSceneManagerView: View {
             requestSelectedSceneScroll(animated: false)
         }
         .onDisappear {
+            clearUnsavedWording()
             if audioExporter.isExporting { audioExporter.cancel() }
             if appModel.isSceneManagerNarrationQueuePlaying {
                 appModel.stopSceneManagerNarrationQueue()
@@ -281,7 +282,19 @@ struct JSONSceneManagerView: View {
         return VStack(alignment: .leading, spacing: 12) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    editableField("Narration", field: .narration, text: $narration)
+                    editableField("Narration", field: .narration, text: Binding(get: { narration }, set: { value in
+                        narration = value
+                        if appModel.scriptInputFormat == .baserow {
+                            let dirtyID = value == scene.narration ? nil : scene.id
+                            if appModel.guidedNarrationReview.unsavedEditorSceneID != dirtyID {
+                                appModel.guidedNarrationReview.unsavedEditorSceneID = dirtyID
+                            }
+                        }
+                    }))
+                    if appModel.scriptInputFormat == .baserow {
+                        SceneManagerGuidedReview(review: appModel.guidedNarrationReview, practice: appModel.guidedPractice,
+                            scene: scene, wordingEdited: narration != scene.narration) { _ = saveChanges() }
+                    }
                     editableField("On Screen", field: .onScreen, text: $onScreen)
                     onScreenLinks
                     if let code = scene.code {
@@ -724,7 +737,14 @@ struct JSONSceneManagerView: View {
         UserDefaults.standard.set(previewFontSize, forKey: "NarrationPilot.jsonPreviewFontSize")
     }
 
+    private func clearUnsavedWording() {
+        if appModel.guidedNarrationReview.unsavedEditorSceneID != nil {
+            appModel.guidedNarrationReview.unsavedEditorSceneID = nil
+        }
+    }
+
     private func loadDraft() {
+        clearUnsavedWording()
         let scene = workingChapter.scenes[selectedIndex]
         narration = scene.narration
         onScreen = scene.onScreen
@@ -791,6 +811,7 @@ struct JSONSceneManagerView: View {
             )
             try appModel.saveEditedChapter(updatedChapter, restartGuidedReview: restartGuidedReview)
             workingChapter = updatedChapter
+            clearUnsavedWording()
             selectedIndex = targetIndex
             pendingSourceChapter = nil
             activeField = nil

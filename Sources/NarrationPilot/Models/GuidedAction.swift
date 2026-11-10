@@ -30,7 +30,8 @@ enum GuidedAction: String, CaseIterable, Identifiable {
     }
 
     @MainActor func available(_ review: GuidedNarrationReview, _ practice: GuidedPracticeSession) -> Bool {
-        guard review.active else { return false }
+        guard review.active, let draft = review.draft, review.unsavedEditorSceneID != draft.sceneID,
+              review.editorResetRequestID == nil else { return false }
         if practice.active {
             guard practice.approval?.id == review.audioDecision?.id else { return false }
             switch self {

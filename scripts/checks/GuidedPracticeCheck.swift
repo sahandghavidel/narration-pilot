@@ -178,6 +178,14 @@ import Foundation
         let last = GuidedNarrationDraft(sessionID: UUID(), sceneID: "next-row", revision: 1, narration: "Next scene.")
         try await review.beginChapter([draft, last])
         func press(_ action: GuidedAction) { action.perform(review, practice) }
+        review.unsavedEditorSceneID = draft.sceneID
+        press(.approveWording)
+        precondition(review.decision == nil && !GuidedAction.approveWording.available(review, practice))
+        review.unsavedEditorSceneID = nil
+        review.editorResetRequestID = UUID()
+        press(.approveWording)
+        precondition(review.decision == nil)
+        review.editorResetRequestID = nil
         press(.replayNarration)
         await Task.yield()
         press(.approveWording)

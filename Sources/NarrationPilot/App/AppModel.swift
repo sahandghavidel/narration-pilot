@@ -2388,8 +2388,15 @@ final class AppModel: ObservableObject {
         refreshScriptScenes()
         saveBaserowCache(chapter)
         if reset && restartGuidedReview, let currentDraft {
+            let requestID = UUID()
+            guidedNarrationReview.editorResetRequestID = requestID
             Task { @MainActor in
-                guard self.isReviewingBaserowChapter, self.guidedNarrationReview.draft == currentDraft,
+                defer {
+                    if self.guidedNarrationReview.editorResetRequestID == requestID {
+                        self.guidedNarrationReview.editorResetRequestID = nil
+                    }
+                }
+                guard self.guidedNarrationReview.editorResetRequestID == requestID, self.isReviewingBaserowChapter, self.guidedNarrationReview.draft == currentDraft,
                       self.loadedChapter?.scenes.first(where: { $0.id == changed.id })?.narration == changed.narration else { return }
                 do {
                     try await self.guidedNarrationReview.replaceCurrentSceneWording(changed.narration)
@@ -3415,6 +3422,9 @@ final class AppModel: ObservableObject {
     }
 
     func startBaserowReview(_ selection: GuidedSceneSelection) async throws {
+        await sceneSaveTask?.value
+        let sceneID = "baserow-row-\(selection.startRow)"
+        if let failure = failedSceneSaves[sceneID] { throw BaserowSceneError.invalidScenes("Retry the scene save first. \(failure)") }
         let rows = try await baserowSceneService.fetchScenes(baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID)
             .filter { $0.scriptIDs.contains(selection.script) && $0.part == selection.part }
         guard let index = rows.firstIndex(where: { $0.rowID == selection.startRow }) else {
@@ -3426,7 +3436,7 @@ final class AppModel: ObservableObject {
         guard await clonedFocuSeeControl.sample() == .paused else {
             throw BaserowSceneError.invalidScenes("Pause the active FocuSee recording before starting the chapter.")
         }
-        guard selection == guidedSceneSelection, !isBaserowSyncing else {
+        guard selection == guidedSceneSelection, guidedNarrationReview.unsavedEditorSceneID != sceneID, !isBaserowSyncing else {
             throw BaserowSceneError.invalidScenes("The selected scene changed. Start review from the current selection.")
         }
         try await guidedNarrationReview.beginChapter(rows[index...].map {

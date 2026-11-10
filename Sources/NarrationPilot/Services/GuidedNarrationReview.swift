@@ -83,6 +83,8 @@ struct GuidedNarrationSnapshot: Codable {
 final class GuidedNarrationReview: ObservableObject {
     nonisolated static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/local.clipboardreadermac/GuidedNarrationReview")
+    @Published var unsavedEditorSceneID: String?
+    @Published var editorResetRequestID: UUID?
     @Published private(set) var active = false
     @Published private(set) var phase = "inactive"
     @Published private(set) var message = "No guided narration review is active."
