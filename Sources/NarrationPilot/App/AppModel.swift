@@ -3535,7 +3535,7 @@ final class AppModel: ObservableObject {
         }
         guidedNarrationReview.approveAudioVersion = { [weak self] id, narration, voiceID in
             guard let self else { throw CancellationError() }
-            // Approval persists synchronously; Tiny.en timings fill in separately.
+            // Guided practice requests timings when it loads the approved WAV.
             try self.clonedClipboardAudio.approveGuidedAudio(takeID: id, narration: narration, voiceID: voiceID)
         }
         guidedNarrationReview.cancelAudioPreparation = { [weak self] in self?.clonedClipboardAudio.cancelGuidedPreparation() }

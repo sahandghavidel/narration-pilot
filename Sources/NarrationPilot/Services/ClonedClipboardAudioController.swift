@@ -135,9 +135,10 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         -> (take: ClipboardAudioTake, audio: Data, transcription: ClipboardAudioTranscription) {
         let frozen = try approvedAudio(narration: narration, voiceID: voiceID)
         guard frozen.take.id == takeID else { throw recordingError("The approved version changed. Approve and practice the intended version first.") }
+        try Task.checkCancellation()
         loadCachedTranscription(for: frozen.take)
         if transcriptions[takeID] == nil, !transcribingIDs.contains(takeID) { transcribeApprovedAudio(takeID) }
-        // A transcription already started by audio approval is shared, not duplicated.
+        // Concurrent practice requests share the same transcription.
         while transcribingIDs.contains(takeID) {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(50))
@@ -209,30 +210,29 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         guard !approvedRecordingIsActive() else { message = "Finish the cloned audio take before approving another version."; return nil }
         guard !selectedIsApproved else { message = "This audio is already approved for reuse."; return nil }
         do {
-            return try persistApproval(for: take)
+            try persistApproval(for: take)
+            return transcribeApprovedAudio(take.id)
         } catch { message = "Could not approve audio: \(error.localizedDescription)"; return nil }
     }
 
     /// Approves the frozen guided candidate, regardless of library UI selection.
-    @discardableResult
-    func approveGuidedAudio(takeID: UUID, narration: String, voiceID: String) throws -> Task<Void, Never>? {
+    func approveGuidedAudio(takeID: UUID, narration: String, voiceID: String) throws {
         guard !isGenerating, !approvedRecordingIsActive() else { throw recordingError("Finish audio preparation or recording before approval.") }
         guard let take = takes.first(where: { $0.id == takeID }),
               Self.previewApprovalIssue(take: take, previewedID: lastPreviewedID, narration: narration, voiceID: voiceID) == nil else {
             throw recordingError("Replay the matching guided audio before approving this version.")
         }
-        return try persistApproval(for: take)
+        try persistApproval(for: take)
     }
 
-    private func persistApproval(for take: ClipboardAudioTake) throws -> Task<Void, Never>? {
+    private func persistApproval(for take: ClipboardAudioTake) throws {
         let validation = try AVAudioPlayer(contentsOf: audioURL(for: take))
         guard validation.duration.isFinite, validation.duration > 0 else { throw missingApprovedFile() }
-        guard approvedVersions[take.groupID] != take.id else { message = "This audio is already approved for reuse."; return nil }
+        guard approvedVersions[take.groupID] != take.id else { message = "This audio is already approved for reuse."; return }
         let state = ClipboardAudioGroupState(narration: take.spokenText, voiceID: take.voice.id, approvedVersionID: take.id)
         try JSONEncoder().encode(state).write(to: groupURL(for: take).appendingPathComponent("group.json"), options: .atomic)
         approvedVersions[take.groupID] = take.id
         message = "Approved. This narration and voice will reuse this exact audio next time."
-        return transcribeApprovedAudio(take.id)
     }
 
     private var guidedPreparationID: UUID?
@@ -269,7 +269,6 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
             let validation = try AVAudioPlayer(contentsOf: audioURL(for: take))
             guard validation.duration.isFinite, validation.duration > 0 else { throw missingApprovedFile() }
             message = "Reusing approved audio. No generation requested."
-            transcribeApprovedAudio(take.id)
             return take
         }
         message = "Generating cloned audio for approved narration…"

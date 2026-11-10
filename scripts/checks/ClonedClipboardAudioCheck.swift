@@ -1,6 +1,6 @@
 import Foundation
 
-// Compile with the production client/controller and dependencies; uses no real service or playback.
+// Compile with the production client/controller and dependencies; uses a fixture HTTP service and a short silent WAV.
 private final class FixtureState: @unchecked Sendable {
     let lock = NSLock()
     var brokenAudio = false
@@ -252,10 +252,40 @@ struct ClonedClipboardAudioCheck {
             preconditionFailure("An ended review must not start playback")
         } catch is CancellationError { }
         do {
-            _ = try reopened.approveGuidedAudio(takeID: newGuided.id, narration: "Frozen approved wording.", voiceID: "test-voice")
+            try reopened.approveGuidedAudio(takeID: newGuided.id, narration: "Frozen approved wording.", voiceID: "test-voice")
             preconditionFailure("An unheard guided candidate must not be approved")
         } catch { }
         reopened.recordingAllowsPreview = { true }
+        // Drive the same guided approval and WAV reader used by Record Myself.
+        func countTranscriptions() -> Int {
+            FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.transcriptionCount }
+        }
+        let beforeManual = countTranscriptions()
+        FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.transcriptionFails = true }
+        try await reopened.previewGuidedAudio(takeID: newGuided.id, isCurrent: { true })
+        try reopened.approveGuidedAudio(takeID: newGuided.id, narration: newGuided.spokenText, voiceID: "test-voice")
+        reopened.stopGuidedPreview(takeID: newGuided.id)
+        for _ in 0..<2 {
+            let manual = try reopened.approvedAudio(narration: newGuided.spokenText, voiceID: "test-voice")
+            precondition(manual.take.id == newGuided.id && manual.audio == FixtureState.wav())
+        }
+        let reused = try await reopened.prepareGuidedAudio(narration: newGuided.spokenText, voiceID: "test-voice",
+                                                            forceNewVersion: false, isCurrent: { true })
+        precondition(reused.id == newGuided.id && reopened.transcribingIDs.isEmpty)
+        precondition(!FileManager.default.fileExists(atPath: reopened.transcriptionURL(for: reused).path))
+        precondition(countTranscriptions() == beforeManual)
+        FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.transcriptionFails = false }
+        async let firstPractice = reopened.approvedPracticeMaterial(takeID: reused.id, narration: reused.spokenText, voiceID: "test-voice")
+        async let samePractice = reopened.approvedPracticeMaterial(takeID: reused.id, narration: reused.spokenText, voiceID: "test-voice")
+        let (one, two) = try await (firstPractice, samePractice)
+        precondition(one.transcription.hasValidTimings && two.transcription.audioSHA256 == one.transcription.audioSHA256)
+        precondition(countTranscriptions() == beforeManual + 1)
+        let restarted = ClonedClipboardAudioController(directory: folder, defaults: defaults, client: api)
+        let requestsWithCache = FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount }
+        _ = try await restarted.approvedPracticeMaterial(takeID: reused.id, narration: reused.spokenText, voiceID: "test-voice")
+        _ = try restarted.approvedAudio(narration: reused.spokenText, voiceID: "test-voice")
+        precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == requestsWithCache)
+        print("PASS: zero transcription requests for guided manual approval, retry and reuse; one for uncached practice; no HTTP for cached practice after restart")
         do {
             _ = try reopened.approvedAudio(narration: "Hello world.", voiceID: "unapproved-voice")
             preconditionFailure("Recording must not fall back to another voice")
@@ -301,6 +331,6 @@ struct ClonedClipboardAudioCheck {
         await reopened.previewSelected()
         precondition(reopened.message.contains("before previewing"))
         precondition(FixtureProtocol.fixture.lock.withLock { FixtureProtocol.fixture.requestCount } == beforeMissing)
-        print("PASS: shortcut approval matching, preview identity, recording guard and idempotence; grouped approval/reuse plus Tiny.en timings, fingerprint invalidation, restart cache, failure/retry, empty timestamps, duplicate suppression and independent version caches; no real playback")
+        print("PASS: shortcut approval matching, preview identity, recording guard and idempotence; grouped approval/reuse plus Tiny.en timings, fingerprint invalidation, restart cache, failure/retry, empty timestamps, duplicate suppression and independent version caches")
     }
 }

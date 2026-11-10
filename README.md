@@ -168,7 +168,7 @@ and voice even if approval exists; it keeps the old approval until you approve a
 replacement. Incomplete saves are not shown; failed generations preserve earlier
 versions. A missing approved file reports an error instead of silently generating.
 
-Approval also starts **Tiny.en** transcription in the background. The existing
+Standalone clipboard approval also starts **Tiny.en** transcription in the background. The existing
 editor endpoint `/api/transcribe-scene` is called with `model: "tiny"`. Each
 version's `transcription.json` stores the recognized text, word start/end times,
 model, actual WAV duration, creation time, and the audio's SHA-256 fingerprint.
@@ -233,7 +233,7 @@ settings, and shortcuts are unchanged.
    Command–Shift–G stops that candidate and generates another version using the
    same wording/voice, keeping previous versions and approvals. Command–Shift–P
    approves the exact previewed version and creates a separate audio approval
-   event. Tiny.en word timings fill in the background; they do not delay approval.
+   event. Guided previews and manual takes use the saved WAV. Choosing agent practice prepares Tiny.en word timings only if valid timings for that take are missing.
 4. Audio approval automatically prepares **guided practice**. The active agent
    reads the exact WAV duration and saved word timings, saves the starting screen
    and cursor checkpoint, and submits a plan anchored to word indices or audio

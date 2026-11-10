@@ -621,7 +621,7 @@ final class GuidedNarrationReview: ObservableObject {
             }
             audioDecision = event; audioAcknowledged = false
             stopAudioPreview(id)
-            phase = "audioApproved"; message = "Exact cloned audio approved. Word timings are saved in the background; recording is not started."
+            phase = "audioApproved"; message = "Voice take approved."
             publish()
             if manual { startManualTake(event); return }
             if let onAudioApproved { onAudioApproved(event); return }
