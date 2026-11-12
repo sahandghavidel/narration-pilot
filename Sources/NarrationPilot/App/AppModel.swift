@@ -3529,6 +3529,26 @@ final class AppModel: ObservableObject {
                 forceNewVersion: forceNewVersion, isCurrent: isCurrent)
             return GuidedPreparedAudio(versionID: take.id, duration: take.duration)
         }
+        guidedNarrationReview.approvedSentence = { [weak self] text, voiceID in
+            guard let self else { throw CancellationError() }
+            return try self.clonedClipboardAudio.approvedSentence(text: text, voiceID: voiceID)
+        }
+        guidedNarrationReview.assembleAudio = { [weak self] narration, voiceID, pieces, pause, isCurrent in
+            guard let self else { throw CancellationError() }
+            return try await self.clonedClipboardAudio.assembleSentences(narration: narration, voiceID: voiceID,
+                pieces: pieces, pause: pause, isCurrent: isCurrent)
+        }
+        guidedNarrationReview.saveSentenceWording = { [weak self] sceneID, narration in
+            guard let self, let chapter = self.loadedChapter, chapter.scenes.contains(where: { $0.id == sceneID }) else {
+                throw NSError(domain: "SentenceAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Load this scene in the scene editor before changing its wording."])
+            }
+            let scenes = chapter.scenes.map { scene in
+                scene.id == sceneID ? NarrationScene(id: scene.id, sceneNumber: scene.sceneNumber, narration: narration,
+                    onScreen: scene.onScreen, code: scene.code, annotation: scene.annotation) : scene
+            }
+            try self.saveEditedChapter(NarrationChapter(schemaVersion: chapter.schemaVersion, chapterNumber: chapter.chapterNumber,
+                chapterTitle: chapter.chapterTitle, scenes: scenes), restartGuidedReview: false)
+        }
         guidedNarrationReview.previewAudio = { [weak self] audio, isCurrent in
             guard let self else { throw CancellationError() }
             try await self.clonedClipboardAudio.previewGuidedAudio(takeID: audio.versionID, isCurrent: isCurrent)

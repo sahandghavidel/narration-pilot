@@ -58,6 +58,7 @@ private struct GuidedReviewActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if review.sentences != nil { SentenceAudioReviewControls(review: review) }
             if let audio = review.audioReview {
                 Text("\(audio.voice.name) · attempt \(audio.attempt)").font(.caption)
                 if let duration = audio.duration {
@@ -73,7 +74,7 @@ private struct GuidedReviewActions: View {
                             action.perform(review, practice)
                         } label: {
                             HStack {
-                                Text(action.rawValue)
+                                Text(action == .approveWording && review.reviewingSentence ? "Approve sentence" : action.rawValue)
                                 if let shortcut = action.shortcut.shortcut {
                                     Text(String(describing: shortcut)).foregroundStyle(.secondary)
                                 }
@@ -181,5 +182,63 @@ private struct GuidedSceneSelection: View {
         }
         .disabled(busy || appModel.isBaserowSyncing || (popupSceneID != nil && popupSceneID != appModel.currentNarrationScene?.id))
         .onChange(of: appModel.guidedSceneSelection) { issue = "" }
+    }
+}
+
+private struct SentenceAudioReviewControls: View {
+    @ObservedObject var review: GuidedNarrationReview
+    @State private var text = ""
+    var body: some View {
+        if let state = review.sentences {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Sentence audio · \(state.pieces.filter(\.approved).count) of \(state.pieces.count) approved").font(.headline)
+                Text("Approved sentences are saved and reusable in other scenes with the same text and voice.").font(.caption)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(state.pieces.enumerated()), id: \.element.id) { index, piece in
+                            Button { review.selectSentence(index) } label: {
+                                HStack(alignment: .top) {
+                                    Image(systemName: piece.approved ? "checkmark.circle.fill" : "circle")
+                                    Text("\(index + 1). \(piece.text)").multilineTextAlignment(.leading)
+                                    Spacer()
+                                    if index == state.selectedIndex { Image(systemName: "speaker.wave.2") }
+                                }
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }.frame(maxHeight: 180)
+                if let piece = review.currentSentence {
+                    Text("Sentence \(state.selectedIndex + 1) of \(state.pieces.count)").font(.subheadline.bold())
+                    if review.sentenceEditorRequested {
+                        TextEditor(text: $text).frame(height: 85)
+                        HStack {
+                            Button("Save sentence wording") { review.editSentence(text); review.sentenceEditorRequested = false }
+                            Button("Cancel") { review.sentenceEditorRequested = false }
+                        }
+                    } else {
+                        HStack {
+                            Button("Edit sentence") { text = piece.text; review.sentenceEditorRequested = true }
+                            Button("Split sentence") { review.splitCurrentSentence() }
+                            Button("Join with next") { review.mergeNextSentence() }.disabled(state.selectedIndex + 1 >= state.pieces.count)
+                        }
+                    }
+                    Button("Preview with previous sentence") { review.previewSentencePair() }.disabled(state.selectedIndex == 0)
+                }
+                if review.phase == "audioSuspended" || review.phase == "audioFailed" {
+                    Button("Continue sentence review") { review.generateAudio() }
+                }
+                HStack {
+                    Text("Pause between sentences")
+                    Picker("Pause", selection: Binding(get: { state.pauseSeconds }, set: { review.setSentencePause($0) })) {
+                        ForEach([0.0, 0.15, 0.22, 0.35, 0.5, 0.75, 1.0], id: \.self) { value in
+                            Text("\(value, specifier: "%.2f") s").tag(value)
+                        }
+                    }.labelsHidden().frame(width: 100)
+                    Button("Preview full scene") { review.previewFullScene() }.disabled(!state.allApproved)
+                }
+            }.disabled(review.audioBusy || review.audioDecision != nil)
+                .onChange(of: state.selectedIndex) { review.sentenceEditorRequested = false }
+                .onChange(of: review.sentenceEditorRequested) { if review.sentenceEditorRequested { text = review.currentSentence?.text ?? "" } }
+        }
     }
 }

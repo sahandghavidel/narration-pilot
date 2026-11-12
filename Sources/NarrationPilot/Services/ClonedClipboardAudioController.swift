@@ -228,6 +228,13 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
     private func persistApproval(for take: ClipboardAudioTake) throws {
         let validation = try AVAudioPlayer(contentsOf: audioURL(for: take))
         guard validation.duration.isFinite, validation.duration > 0 else { throw missingApprovedFile() }
+        // Per-version approval survives selection of a newer approved take.
+        // Existing scenes may continue referencing this immutable version.
+        let approvedFile = audioURL(for: take).deletingLastPathComponent().appendingPathComponent("approved.json")
+        if !FileManager.default.fileExists(atPath: approvedFile.path) {
+            let approval = ["takeID": take.id.uuidString, "audioSHA256": ClipboardAudioTranscription.fingerprint(try Data(contentsOf: audioURL(for: take)))]
+            try JSONEncoder().encode(approval).write(to: approvedFile, options: .atomic)
+        }
         guard approvedVersions[take.groupID] != take.id else { message = "This audio is already approved for reuse."; return }
         let state = ClipboardAudioGroupState(narration: take.spokenText, voiceID: take.voice.id, approvedVersionID: take.id)
         try JSONEncoder().encode(state).write(to: groupURL(for: take).appendingPathComponent("group.json"), options: .atomic)
@@ -280,6 +287,49 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
         takes.insert(take, at: 0)
         message = "Saved new guided audio version."
         return take
+    }
+
+    private func sentenceApprovalIsSaved(_ take: ClipboardAudioTake) throws -> Bool {
+        if approvedVersions[take.groupID] == take.id { return true } // Existing approved library versions.
+        let file = audioURL(for: take).deletingLastPathComponent().appendingPathComponent("approved.json")
+        guard FileManager.default.fileExists(atPath: file.path) else { return false }
+        let marker = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: file))
+        let hash = ClipboardAudioTranscription.fingerprint(try Data(contentsOf: audioURL(for: take)))
+        return marker["takeID"] == take.id.uuidString && marker["audioSHA256"] == hash
+    }
+
+    func approvedSentence(text: String, voiceID: String) throws -> GuidedPreparedAudio? {
+        let key = ClipboardAudioGrouping.key(text: text, voiceID: voiceID)
+        guard let id = approvedVersions[key] else { return nil }
+        guard let take = takes.first(where: { $0.id == id && $0.groupID == key }) else { throw missingApprovedFile() }
+        let player = try AVAudioPlayer(contentsOf: audioURL(for: take))
+        guard player.duration > 0 else { throw missingApprovedFile() }
+        return GuidedPreparedAudio(versionID: id, duration: player.duration)
+    }
+
+    func assembleSentences(narration: String, voiceID: String, pieces: [GuidedPreparedAudio], pause: Double,
+                           isCurrent: @MainActor () -> Bool) async throws -> GuidedPreparedAudio {
+        guard !isGenerating, !approvedRecordingIsActive(), await recordingAllowsPreview(), isCurrent() else { throw CancellationError() }
+        let sources = try pieces.map { piece -> ClipboardAudioTake in
+            guard let take = takes.first(where: { $0.id == piece.versionID }), take.voice.id == voiceID,
+                  try sentenceApprovalIsSaved(take) else { throw recordingError("Every sentence must have saved approval before assembly.") }
+            return take
+        }
+        guard let first = sources.first else { throw recordingError("No approved sentences to assemble.") }
+        let files = sources.map { audioURL(for: $0) }
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent("sentence-assembly-\(UUID()).wav")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let starts = try await Task.detached(priority: .userInitiated) {
+            try SentenceAudioAssembler.assemble(files: files, pause: pause, destination: destination)
+        }.value
+        guard isCurrent() else { throw CancellationError() }
+        let manifest = SentenceAssemblySource(sentenceAssembly: zip(sources, starts).map { SentenceAssemblyPart(takeID: $0.0.id, start: $0.1) })
+        let generated = GeneratedClipboardAudio(audio: try Data(contentsOf: destination), voice: first.voice,
+            responseJSON: String(decoding: try JSONEncoder().encode(manifest), as: UTF8.self))
+        let take = try save(generated, id: UUID(), clipboard: narration,
+                            text: SpokenTextSanitizer.preparingForSpeech(narration, includesBracketedDirections: false))
+        takes.insert(take, at: 0)
+        return GuidedPreparedAudio(versionID: take.id, duration: take.duration)
     }
 
     func previewGuidedAudio(takeID: UUID, isCurrent: @MainActor () -> Bool) async throws {
@@ -480,8 +530,30 @@ final class ClonedClipboardAudioController: NSObject, ObservableObject, AVAudioP
             do {
                 let audio = try Data(contentsOf: self.audioURL(for: take))
                 let validation = try AVAudioPlayer(data: audio)
-                let saved = try await self.client.transcribe(audio: audio, generationResponse: take.generationResponse,
-                    takeID: id, duration: validation.duration)
+                let saved: ClipboardAudioTranscription
+                if let assembly = try? JSONDecoder().decode(SentenceAssemblySource.self, from: Data(take.generationResponse.utf8)) {
+                    var words: [ClipboardWordTiming] = []
+                    for part in assembly.sentenceAssembly {
+                        guard let sentence = self.takes.first(where: { $0.id == part.takeID }) else { throw self.missingApprovedFile() }
+                        self.loadCachedTranscription(for: sentence)
+                        let transcript: ClipboardAudioTranscription
+                        if let cached = self.transcriptions[sentence.id] { transcript = cached }
+                        else {
+                            transcript = try await self.client.transcribe(audio: Data(contentsOf: self.audioURL(for: sentence)),
+                                generationResponse: sentence.generationResponse, takeID: sentence.id, duration: sentence.duration)
+                            try JSONEncoder().encode(transcript).write(to: self.transcriptionURL(for: sentence), options: .atomic)
+                            self.transcriptions[sentence.id] = transcript
+                        }
+                        words += transcript.words.map { ClipboardWordTiming(word: $0.word, start: $0.start + part.start, end: min($0.end + part.start, validation.duration)) }
+                    }
+                    saved = ClipboardAudioTranscription(schemaVersion: 1, model: "tiny.en",
+                        audioSHA256: ClipboardAudioTranscription.fingerprint(audio), createdAt: Date(), text: take.spokenText,
+                        duration: validation.duration, words: words)
+                    guard saved.hasValidTimings else { throw self.recordingError("Assembled word timings are invalid.") }
+                } else {
+                    saved = try await self.client.transcribe(audio: audio, generationResponse: take.generationResponse,
+                        takeID: id, duration: validation.duration)
+                }
                 let currentAudio = try Data(contentsOf: self.audioURL(for: take))
                 guard saved.audioSHA256 == ClipboardAudioTranscription.fingerprint(currentAudio) else {
                     throw NSError(domain: "ClonedClipboardAudio", code: 5, userInfo: [NSLocalizedDescriptionKey:

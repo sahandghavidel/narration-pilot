@@ -43,10 +43,10 @@ enum GuidedAction: String, CaseIterable, Identifiable {
         }
         switch self {
         case .replayNarration: return review.decision == nil && ["reading", "awaitingDecision", "suspended", "blocked"].contains(review.phase)
-        case .approveWording: return review.decision == nil && ["reading", "awaitingDecision"].contains(review.phase)
+        case .approveWording: return review.phase == "sentenceReady" && !review.audioBusy || review.decision == nil && ["reading", "awaitingDecision"].contains(review.phase)
         case .improveWording: return review.canImproveWording
         case .replayVoice: return review.decision?.kind == "approveNarration" && review.audioReview?.versionID != nil && review.audioDecision == nil
-        case .regenerateVoice: return review.decision?.kind == "approveNarration" && review.audioDecision == nil
+        case .regenerateVoice: return review.decision?.kind == "approveNarration" && review.audioDecision == nil && !review.audioBusy
         case .startPractice: return review.phase == "audioReady" && !review.audioBusy || review.phase == "audioApproved" && review.audioDecision != nil
         case .manual: return ["audioReady", "manualRetry"].contains(review.phase) && !review.audioBusy
         default: return false

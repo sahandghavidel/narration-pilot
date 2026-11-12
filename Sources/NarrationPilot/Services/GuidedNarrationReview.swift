@@ -33,7 +33,7 @@ struct GuidedAudioVoice: Codable, Equatable, Sendable {
     var name: String
 }
 
-struct GuidedPreparedAudio: Equatable, Sendable {
+struct GuidedPreparedAudio: Codable, Equatable, Sendable {
     var versionID: UUID
     var duration: Double
 }
@@ -75,6 +75,7 @@ struct GuidedNarrationSnapshot: Codable {
     var nextCandidate: GuidedNarrationDraft?
     var remainingChapterScenes: [GuidedNarrationDraft]?
     var practice: [String: String]?
+    var sentences: SentenceAudioReview? = nil
 }
 
 /// Local guided wording/audio handshake. Frozen wording is passed directly to
@@ -96,6 +97,17 @@ final class GuidedNarrationReview: ObservableObject {
     @Published private(set) var audioDecision: GuidedAudioDecision?
     @Published private(set) var audioAcknowledged = false
     @Published private(set) var audioBusy = false
+    @Published private(set) var sentences: SentenceAudioReview?
+    @Published var sentenceEditorRequested = false
+    var approvedSentence: (String, String) throws -> GuidedPreparedAudio? = { _, _ in nil }
+    var assembleAudio: (@MainActor (String, String, [GuidedPreparedAudio], Double, @MainActor () -> Bool) async throws -> GuidedPreparedAudio)?
+    var saveSentenceWording: ((String, String) throws -> Void)?
+    private var sentenceStore: SentenceAudioStore { SentenceAudioStore(directory: directory.appendingPathComponent("sentences")) }
+    var reviewingSentence: Bool { sentences.map { $0.pieces.indices.contains($0.selectedIndex) } ?? false }
+    var currentSentence: SentenceAudioPiece? {
+        guard let sentences, reviewingSentence else { return nil }
+        return sentences.pieces[sentences.selectedIndex]
+    }
     private var nextCandidate: GuidedNarrationDraft?
     private(set) var remainingChapterScenes: [GuidedNarrationDraft]?
     @Published private(set) var pendingEndingSessionID: UUID?
@@ -165,6 +177,7 @@ final class GuidedNarrationReview: ObservableObject {
                 nextCandidate = saved.nextCandidate
                 pendingEndingSessionID = saved.pendingEndingSessionID
                 audioReview = saved.audioReview
+                sentences = saved.sentences
                 if let draft, active {
                     let latestEvent = FileManager.default.fileExists(atPath: voiceImprovementURL(draft).path) ? voiceImprovementURL(draft) : eventURL(draft)
                     decision = try? Self.decoder().decode(GuidedNarrationDecision.self, from: Data(contentsOf: latestEvent))
@@ -188,6 +201,16 @@ final class GuidedNarrationReview: ObservableObject {
                             phase = "audioSuspended"; message = "Audio review restored. Replay the saved candidate, or use redo to generate another version."
                         }
                     }
+                }
+            }
+            if active, audioDecision == nil, let draft, let voice = audioReview?.voice,
+               let persisted = try sentenceStore.load(sceneID: draft.sceneID, voiceID: voice.id), persisted.narration == draft.narration {
+                sentences = persisted
+                let candidate = persisted.pieces.indices.contains(persisted.selectedIndex) ? persisted.pieces[persisted.selectedIndex].candidate : persisted.assembled
+                audioReview?.versionID = candidate?.versionID; audioReview?.duration = candidate?.duration
+                if decision?.kind == "approveNarration" {
+                    phase = "audioSuspended"
+                    message = "Sentence approvals restored. Continue review to reuse saved audio; nothing generates automatically."
                 }
             }
         } catch { message = "Cannot prepare narration review: \(error.localizedDescription)" }
@@ -278,6 +301,7 @@ final class GuidedNarrationReview: ObservableObject {
     @discardableResult func approve() -> Bool {
         if active, phase.hasPrefix("manual") { return true }
         if active, practiceApprove() { return true }
+        if active, reviewingSentence, phase == "sentenceReady", !audioBusy { approveSentence(); return true }
         if active, phase == "audioReady", !audioBusy { approveCurrentAudio() }
         else { choose("approveNarration") }
         return active
@@ -286,12 +310,12 @@ final class GuidedNarrationReview: ObservableObject {
         if active, phase.hasPrefix("manual") { return true }
         deferredAudioChoice = nil
         if active, practiceRedo() { return true }
-        if active, ["approved", "audioReady", "audioFailed", "audioSuspended"].contains(phase), !audioBusy { generateAudio(forceNewVersion: true) }
+        if active, ["approved", "audioReady", "sentenceReady", "audioFailed", "audioSuspended"].contains(phase), !audioBusy { generateAudio(forceNewVersion: true) }
         else { choose("improveNarration") }
         return active
     }
 
-    func approveWording() { choose("approveNarration") }
+    func approveWording() { if reviewingSentence { approveSentence() } else { choose("approveNarration") } }
 
     func startAgentPractice() {
         guard active, phase == "audioReady", !audioBusy else { return }
@@ -306,7 +330,9 @@ final class GuidedNarrationReview: ObservableObject {
 
     func improveWording(instruction: String? = nil) {
         guard canImproveWording else { return }
-        choose("improveNarration", fromAudio: decision != nil, instruction: instruction)
+        if reviewingSentence, instruction == nil, !audioBusy { sentenceEditorRequested = true; return }
+        let scoped = instruction ?? currentSentence.map { "Revise only this sentence, keeping all other sentences unchanged: \($0.text)" }
+        choose("improveNarration", fromAudio: decision != nil, instruction: scoped)
     }
 
     func startRestoredManualTake(_ approval: GuidedAudioDecision) {
@@ -404,7 +430,175 @@ final class GuidedNarrationReview: ObservableObject {
         publish()
     }
 
+    private func saveSentences() throws {
+        if let sentences { try sentenceStore.save(sentences) }
+    }
+
+    private func loadSentences(draft: GuidedNarrationDraft, voice: GuidedAudioVoice) throws {
+        if sentences?.sceneID == draft.sceneID, sentences?.narration == draft.narration, sentences?.voiceID == voice.id { return }
+        let previous = try sentenceStore.load(sceneID: draft.sceneID, voiceID: voice.id)
+        var restored = SentenceAudioReview.restored(sceneID: draft.sceneID, narration: draft.narration, voiceID: voice.id, previous: previous)
+        for index in restored.pieces.indices where restored.pieces[index].candidate == nil {
+            if let saved = try approvedSentence(restored.pieces[index].text, voice.id) {
+                restored.pieces[index].candidate = saved
+                restored.pieces[index].approved = true
+            }
+        }
+        if restored.allApproved { restored.selectedIndex = -1 }
+        else if !restored.pieces.indices.contains(restored.selectedIndex) || restored.pieces[restored.selectedIndex].approved {
+            restored.selectedIndex = restored.pieces.firstIndex(where: { !$0.approved }) ?? 0
+        }
+        sentences = restored
+        try saveSentences()
+    }
+
+    private func generateSentenceAudio(forceNewVersion: Bool) {
+        guard active, let draft, decision?.kind == "approveNarration", audioDecision == nil,
+              !audioBusy, let prepareAudio, let assembleAudio else { return }
+        guard let voice = audioReview?.voice ?? selectedAudioVoice() else {
+            phase = "audioFailed"; message = "Choose an English cloned voice before preparing sentences."; publish(); return
+        }
+        do { try loadSentences(draft: draft, voice: voice) }
+        catch { phase = "audioFailed"; message = "Saved sentence audio could not be loaded: \(error.localizedDescription)"; publish(); return }
+        generation = UUID(); cancelAudio(); stopOwnedSpeech()
+        let epoch = generation, operation = UUID()
+        audioOperationID = operation; audioBusy = true
+        audioReview = GuidedAudioReview(voice: voice, attempt: (audioReview?.attempt ?? 0) + 1)
+        phase = "audioGenerating"; message = reviewingSentence ? "Preparing sentence \(sentences!.selectedIndex + 1) of \(sentences!.pieces.count)…" : "Assembling approved sentences…"
+        publish()
+        audioTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.audioOperationID == operation { self.audioBusy = false; self.audioTask = nil; self.publish() } }
+            let isCurrent: @MainActor () -> Bool = { self.active && self.generation == epoch && self.audioOperationID == operation && !Task.isCancelled }
+            do {
+                let prepared: GuidedPreparedAudio
+                if let piece = self.currentSentence, let index = self.sentences?.selectedIndex {
+                    try await self.sayAndWait("Sentence \(index + 1) of \(self.sentences!.pieces.count).", cueTimeout: .seconds(3), isCurrent: isCurrent)
+                    if !forceNewVersion, let candidate = piece.candidate { prepared = candidate }
+                    else { prepared = try await prepareAudio(piece.text, voice.id, forceNewVersion, isCurrent) }
+                    guard isCurrent() else { return }
+                    if forceNewVersion || piece.candidate == nil {
+                        self.sentences?.pieces[index].candidate = prepared
+                        self.sentences?.pieces[index].approved = false
+                        self.sentences?.assembled = nil
+                    }
+                } else {
+                    guard let state = self.sentences, state.allApproved else { throw self.error("Approve each sentence first.") }
+                    if !forceNewVersion, let saved = state.assembled { prepared = saved }
+                    else { prepared = try await assembleAudio(draft.narration, voice.id, state.pieces.compactMap(\.candidate), state.pauseSeconds, isCurrent) }
+                    guard isCurrent() else { return }
+                    self.sentences?.assembled = prepared
+                }
+                guard prepared.duration.isFinite, prepared.duration > 0 else { throw self.error("Saved sentence has no playable audio.") }
+                try self.saveSentences()
+                self.audioReview?.versionID = prepared.versionID; self.audioReview?.duration = prepared.duration
+                self.phase = "audioPreparing"; self.publish()
+                try await self.playAudioCandidate(prepared, isCurrent: isCurrent)
+            } catch {
+                guard isCurrent() else { return }
+                self.phase = "audioFailed"; self.message = "Sentence audio: \(error.localizedDescription). Approved sentences are retained."; self.publish()
+            }
+        }
+    }
+
+    func approveSentence() {
+        guard active, phase == "sentenceReady", !audioBusy, var state = sentences,
+              let piece = currentSentence, let candidate = piece.candidate, let voice = audioReview?.voice else { return }
+        do {
+            try approveAudioVersion(candidate.versionID, piece.text, voice.id)
+            state.pieces[state.selectedIndex].approved = true
+            state.selectedIndex = state.pieces.firstIndex(where: { !$0.approved }) ?? -1
+            // Persist the approval before moving on or requesting any generation.
+            try sentenceStore.save(state)
+            sentences = state
+            generateSentenceAudio(forceNewVersion: false)
+        } catch { message = "Sentence approval was not saved: \(error.localizedDescription). Retry A."; publish() }
+    }
+
+    func selectSentence(_ index: Int) {
+        guard active, !audioBusy, audioDecision == nil, sentences?.pieces.indices.contains(index) == true else { return }
+        sentences?.selectedIndex = index
+        do { try saveSentences(); generateSentenceAudio(forceNewVersion: false) }
+        catch { message = "Could not save sentence selection: \(error.localizedDescription)"; publish() }
+    }
+
+    func previewFullScene() {
+        guard !audioBusy, audioDecision == nil, sentences?.allApproved == true else { return }
+        sentences?.selectedIndex = -1
+        generateSentenceAudio(forceNewVersion: false)
+    }
+
+    func setSentencePause(_ seconds: Double) {
+        guard !audioBusy, audioDecision == nil, seconds.isFinite, (0...2).contains(seconds), sentences != nil else { return }
+        sentences?.pauseSeconds = seconds; sentences?.assembled = nil
+        phase = "audioSuspended"; audioReview?.versionID = nil; audioReview?.duration = nil
+        do { try saveSentences() } catch { message = error.localizedDescription }
+        publish()
+    }
+
+    func previewSentencePair() {
+        guard !audioBusy, audioDecision == nil, let state = sentences, state.selectedIndex > 0,
+              let current = currentSentence?.candidate, let previous = state.pieces[state.selectedIndex - 1].candidate else { return }
+        generation = UUID(); cancelAudio(); stopOwnedSpeech()
+        let epoch = generation, operation = UUID()
+        audioOperationID = operation; audioBusy = true
+        audioTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.audioOperationID == operation { self.audioBusy = false; self.audioTask = nil; self.publish() } }
+            let isCurrent: @MainActor () -> Bool = { self.active && self.generation == epoch && self.audioOperationID == operation && !Task.isCancelled }
+            do {
+                self.phase = "audioPreparing"; self.publish()
+                try await self.previewAudio(previous, isCurrent)
+                try await Task.sleep(for: .seconds(state.pauseSeconds))
+                try await self.playAudioCandidate(current, isCurrent: isCurrent)
+            } catch { if isCurrent() { self.phase = "audioFailed"; self.message = error.localizedDescription; self.publish() } }
+        }
+    }
+
+    func editSentence(_ text: String) {
+        guard !audioBusy, audioDecision == nil, let state = sentences, reviewingSentence,
+              let current = draft, let saveSentenceWording else { return }
+        let edited = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !edited.isEmpty, edited != currentSentence?.text else { return }
+        var pieces = state.pieces.map(\.text); pieces[state.selectedIndex] = edited
+        let narration = pieces.joined(separator: " ")
+        guard narration.count <= 12000 else { return }
+        do {
+            try saveSentenceWording(current.sceneID, narration)
+            choose("improveNarration", fromAudio: true, instruction: "User edited one sentence in the audio review.")
+            guard let event = decision, event.kind == "improveNarration" else { return }
+            let replacement = GuidedNarrationDraft(sessionID: current.sessionID, sceneID: current.sceneID,
+                revision: current.revision + 1, narration: narration)
+            Task { do { try await self.handle(GuidedNarrationCommand(id: UUID(), sessionID: current.sessionID, kind: "submit", draft: replacement, eventID: event.id)) }
+                   catch { self.message = error.localizedDescription; self.publish() } }
+        } catch { message = "Could not save sentence wording: \(error.localizedDescription)"; publish() }
+    }
+
+    func splitCurrentSentence() {
+        guard !audioBusy, audioDecision == nil, var state = sentences, let piece = currentSentence else { return }
+        let words = piece.text.split(separator: " ")
+        guard words.count >= 4 else { return }
+        let middle = words.count / 2
+        state.pieces.replaceSubrange(state.selectedIndex...state.selectedIndex, with: [
+            SentenceAudioPiece(text: words[..<middle].joined(separator: " ")),
+            SentenceAudioPiece(text: words[middle...].joined(separator: " "))])
+        state.assembled = nil
+        do { try sentenceStore.save(state); sentences = state; generateSentenceAudio(forceNewVersion: false) }
+        catch { message = error.localizedDescription; publish() }
+    }
+
+    func mergeNextSentence() {
+        guard !audioBusy, audioDecision == nil, var state = sentences, reviewingSentence,
+              state.selectedIndex + 1 < state.pieces.count else { return }
+        let index = state.selectedIndex
+        let merged = SentenceAudioPiece(text: state.pieces[index].text + " " + state.pieces[index + 1].text)
+        state.pieces.replaceSubrange(index...index+1, with: [merged]); state.assembled = nil
+        do { try sentenceStore.save(state); sentences = state; generateSentenceAudio(forceNewVersion: false) }
+        catch { message = error.localizedDescription; publish() }
+    }
+
     func generateAudio(forceNewVersion: Bool = false) {
+        if assembleAudio != nil { generateSentenceAudio(forceNewVersion: forceNewVersion); return }
         guard active, let draft, decision?.kind == "approveNarration", audioDecision == nil,
               (!audioBusy || forceNewVersion), let prepareAudio else { return }
         guard let voice = audioReview?.voice ?? selectedAudioVoice() else {
@@ -467,7 +661,8 @@ final class GuidedNarrationReview: ObservableObject {
         guard isCurrent() else { throw CancellationError() }
         try await previewAudio(audio, isCurrent)
         guard isCurrent() else { return }
-        phase = "audioReady"; message = "Listen again, revise the words, regenerate the voice, or choose who will perform the scene."
+        phase = reviewingSentence ? "sentenceReady" : "audioReady"
+        message = reviewingSentence ? "Sentence preview finished. A approves and saves it; G regenerates only this sentence; V replays." : "Full scene preview finished. P practices; M records your take. Select a sentence to replace only that portion."
         publish()
     }
 
@@ -601,7 +796,8 @@ final class GuidedNarrationReview: ObservableObject {
     }
 
     private func approveCurrentAudio(manual: Bool = false) {
-        guard let draft, let audio = audioReview, let id = audio.versionID else { return }
+        guard !reviewingSentence, sentences == nil || sentences?.allApproved == true,
+              let draft, let audio = audioReview, let id = audio.versionID else { return }
         if pendingEndingSessionID != nil {
             deferredAudioChoice = (draft, manual)
             message = "Waiting for the previous scene’s ending screen to be saved."
@@ -694,6 +890,7 @@ final class GuidedNarrationReview: ObservableObject {
             let revisedVoice = active && draft?.sessionID == next.sessionID ? audioReview?.voice : nil
             audioReview = revisedVoice.map { GuidedAudioReview(voice: $0, attempt: 0) }
             audioDecision = nil; audioAcknowledged = false
+            sentences = nil
             let enteringChapterScene = remainingChapterScenes != nil && draft?.sessionID != next.sessionID
             draft = next; active = true; decision = nil; acknowledged = false; checkingSpeech = false
             if enteringChapterScene { onChapterSceneSelected(next.sceneID) }
@@ -768,7 +965,7 @@ final class GuidedNarrationReview: ObservableObject {
     }
     private func publish() {
         do {
-            try write(GuidedNarrationSnapshot(appRunning: running, pid: ProcessInfo.processInfo.processIdentifier, updatedAt: Date(), active: active, phase: phase, message: message, draft: draft, decision: decision, acknowledged: acknowledged, speechActive: speechToken != nil, audioReview: audioReview, audioDecision: audioDecision, audioAcknowledged: audioAcknowledged, audioBusy: audioBusy, pendingEndingSessionID: pendingEndingSessionID, firstWordAfterPauseMilliseconds: firstWordAfterPauseMilliseconds, nextCandidate: nextCandidate, remainingChapterScenes: remainingChapterScenes, practice: practiceSummary()), to: directory.appendingPathComponent("status.json"))
+            try write(GuidedNarrationSnapshot(appRunning: running, pid: ProcessInfo.processInfo.processIdentifier, updatedAt: Date(), active: active, phase: phase, message: message, draft: draft, decision: decision, acknowledged: acknowledged, speechActive: speechToken != nil, audioReview: audioReview, audioDecision: audioDecision, audioAcknowledged: audioAcknowledged, audioBusy: audioBusy, pendingEndingSessionID: pendingEndingSessionID, firstWordAfterPauseMilliseconds: firstWordAfterPauseMilliseconds, nextCandidate: nextCandidate, remainingChapterScenes: remainingChapterScenes, practice: practiceSummary(), sentences: sentences), to: directory.appendingPathComponent("status.json"))
         } catch { message = "Could not save narration review status: \(error.localizedDescription)" }
     }
     private func error(_ text: String) -> NSError { NSError(domain: "GuidedNarrationReview", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }

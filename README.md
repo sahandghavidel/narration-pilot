@@ -639,3 +639,14 @@ The fallback remains ad-hoc signing and does **not** guarantee preserved macOS
 permissions across changed builds. No custom weaker designated requirement or
 TCC reset is used. A valid consistent certificate must be available to investigate
 permission preservation further; no certificate is created automatically.
+
+
+### Sentence-by-sentence cloned voice review
+
+Guided Review generates one sentence at a time after wording approval. Command–Shift–A approves and durably saves the current sentence before advancing; V replays it, G regenerates only that sentence, and E opens its wording editor. Use the sentence list to revisit a take, preview it with its predecessor, split a long sentence, or join two short ones. Wording edits return to wording review and preserve unchanged approved sentences.
+
+Approved sentence WAVs remain in the existing `ClonedClipboardAudio` library. Exact spoken text plus voice preset ID identifies reusable audio across scenes and app restarts. Each approved version also has an immutable approval marker, so approving a replacement does not invalidate an older scene's selected take. Scene manifests under `GuidedNarrationReview/sentences` retain candidate selection, split boundaries, approvals, and the assembled version. Missing or unreadable approved audio is reported; it is not silently regenerated.
+
+Once every sentence is approved, the app assembles and previews one scene WAV. The pause between sentences is adjustable. Original sentence files are untouched. Guided word timings use each source take's verified transcription plus the exact sample offsets in the assembled WAV, whose fingerprint is checked before practice. Manual recording does not need transcription. P and M become available only at the complete scene preview. Selecting or replacing a sentence requires another full-scene preview before recording.
+
+Previously saved whole-scene previews still reopen normally. Press G to begin sentence review for an existing approved narration. No sentence audio is approved automatically; only exact previously approved sentences are reused.
