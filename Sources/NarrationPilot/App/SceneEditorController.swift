@@ -136,7 +136,8 @@ final class SceneEditorController: NSObject, NSWindowDelegate {
         panel.contentView = NSHostingView(
             rootView: JSONSceneManagerView(
                 chapter: chapter,
-                selectedIndex: selectedIndex
+                selectedIndex: selectedIndex,
+                review: appModel.guidedNarrationReview
             ) { [weak self] in
                 self?.finishClose()
             }

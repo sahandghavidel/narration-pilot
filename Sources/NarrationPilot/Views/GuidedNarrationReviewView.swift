@@ -137,10 +137,6 @@ struct SceneManagerGuidedReview: View {
                     }
                 } else if review.draft?.sceneID == scene.id, review.remainingChapterScenes != nil {
                     Text(practice.active ? practice.message : review.message).font(.caption)
-                    if let draft = review.draft, draft.narration != scene.narration {
-                        Text("Current guided wording").font(.caption.bold())
-                        Text(draft.narration).textSelection(.enabled)
-                    }
                     GuidedReviewActions(review: review, practice: practice, showsImprovementOptions: true)
                         .id(review.draft?.sessionID)
                         .id(review.draft?.revision)

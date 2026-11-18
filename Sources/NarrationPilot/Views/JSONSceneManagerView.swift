@@ -8,10 +8,11 @@ struct JSONSceneManagerView: View {
     let initialIndex: Int
     let close: () -> Void
 
+    @ObservedObject private var review: GuidedNarrationReview
     @StateObject private var audioExporter = NarrationAudioExporter()
     @State private var selectedIndex: Int
     @State private var workingChapter: NarrationChapter
-    @State private var narration = ""
+    @State private var narrationEdit: String?
     @State private var onScreen = ""
     @State private var annotation = ""
     @State private var codeText = ""
@@ -40,10 +41,11 @@ struct JSONSceneManagerView: View {
 
     private enum EditableField: Hashable { case narration, onScreen, code }
 
-    init(chapter: NarrationChapter, selectedIndex: Int, close: @escaping () -> Void) {
+    init(chapter: NarrationChapter, selectedIndex: Int, review: GuidedNarrationReview, close: @escaping () -> Void) {
         self.chapter = chapter
         self.initialIndex = min(max(selectedIndex, 0), max(chapter.scenes.count - 1, 0))
         self.close = close
+        self.review = review
         self._selectedIndex = State(initialValue: self.initialIndex)
         self._workingChapter = State(initialValue: chapter)
     }
@@ -278,22 +280,31 @@ struct JSONSceneManagerView: View {
 
     private var sceneDetails: some View {
         let scene = workingChapter.scenes[selectedIndex]
+        let sourceWording = pendingSourceChapter?.scenes.first(where: { $0.id == scene.id })?.narration ?? scene.narration
+        let reviewWording = guidedWording(for: scene.id)
+        let previewWording = reviewWording ?? sourceWording
 
         return VStack(alignment: .leading, spacing: 12) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    editableField("Narration", field: .narration, text: Binding(get: { narration }, set: { value in
-                        narration = value
-                        if appModel.scriptInputFormat == .baserow {
-                            let dirtyID = value == scene.narration ? nil : scene.id
-                            if appModel.guidedNarrationReview.unsavedEditorSceneID != dirtyID {
-                                appModel.guidedNarrationReview.unsavedEditorSceneID = dirtyID
-                            }
-                        }
+                    editableField("Narration", field: .narration, text: Binding(get: { narrationEdit ?? previewWording }, set: { value in
+                        setNarrationEdit(value == previewWording ? nil : value, sceneID: scene.id)
                     }))
+                    if let reviewWording, reviewWording != sourceWording {
+                        if narrationEdit != nil {
+                            Text("An agent revision is ready. Save your edit or use the agent’s wording.").font(.caption)
+                            Button("Use Agent Wording") {
+                                setNarrationEdit(nil, sceneID: scene.id)
+                                activeField = nil
+                                focusedField = nil
+                            }
+                        } else {
+                            Text("Approve wording to save this revision.").font(.caption)
+                        }
+                    }
                     if appModel.scriptInputFormat == .baserow {
-                        SceneManagerGuidedReview(review: appModel.guidedNarrationReview, practice: appModel.guidedPractice,
-                            scene: scene, wordingEdited: narration != scene.narration) { _ = saveChanges() }
+                        SceneManagerGuidedReview(review: review, practice: appModel.guidedPractice,
+                            scene: scene, wordingEdited: narrationEdit != nil) { _ = saveChanges() }
                     }
                     editableField("On Screen", field: .onScreen, text: $onScreen)
                     onScreenLinks
@@ -737,16 +748,27 @@ struct JSONSceneManagerView: View {
         UserDefaults.standard.set(previewFontSize, forKey: "NarrationPilot.jsonPreviewFontSize")
     }
 
-    private func clearUnsavedWording() {
-        if appModel.guidedNarrationReview.unsavedEditorSceneID != nil {
-            appModel.guidedNarrationReview.unsavedEditorSceneID = nil
+    private func guidedWording(for sceneID: String) -> String? {
+        guard appModel.isReviewingBaserowChapter, let draft = review.draft, draft.sceneID == sceneID else { return nil }
+        return draft.narration
+    }
+
+    private func setNarrationEdit(_ text: String?, sceneID: String) {
+        narrationEdit = text
+        if appModel.scriptInputFormat == .baserow {
+            let dirtyID = text == nil ? nil : sceneID
+            if review.unsavedEditorSceneID != dirtyID { review.unsavedEditorSceneID = dirtyID }
         }
+    }
+
+    private func clearUnsavedWording() {
+        narrationEdit = nil
+        if review.unsavedEditorSceneID != nil { review.unsavedEditorSceneID = nil }
     }
 
     private func loadDraft() {
         clearUnsavedWording()
         let scene = workingChapter.scenes[selectedIndex]
-        narration = scene.narration
         onScreen = scene.onScreen
         annotation = scene.annotation ?? ""
         codeText = scene.code?.text ?? ""
@@ -794,7 +816,7 @@ struct JSONSceneManagerView: View {
             )
         }
         let updated = NarrationScene(
-            id: old.id, sceneNumber: old.sceneNumber, narration: narration,
+            id: old.id, sceneNumber: old.sceneNumber, narration: narrationEdit ?? old.narration,
             onScreen: onScreen, code: updatedCode,
             annotation: annotation.isEmpty ? nil : annotation
         )
@@ -810,6 +832,9 @@ struct JSONSceneManagerView: View {
                 allowsEmptySceneContent: appModel.scriptInputFormat == .baserow
             )
             try appModel.saveEditedChapter(updatedChapter, restartGuidedReview: restartGuidedReview)
+            if restartGuidedReview, narrationEdit == old.narration {
+                appModel.reviewSavedWording(old.narration, sceneID: old.id)
+            }
             workingChapter = updatedChapter
             clearUnsavedWording()
             selectedIndex = targetIndex
@@ -834,7 +859,7 @@ struct JSONSceneManagerView: View {
 
     private var hasUnsavedChanges: Bool {
         let scene = workingChapter.scenes[selectedIndex]
-        return narration != scene.narration ||
+        return narrationEdit != nil ||
             onScreen != scene.onScreen ||
             annotation != (scene.annotation ?? "") ||
             codeText != (scene.code?.text ?? "") ||

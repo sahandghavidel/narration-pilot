@@ -176,7 +176,44 @@ struct GuidedNarrationReviewCheck {
         try await Task.sleep(for: .milliseconds(200))
         precondition(spoken.count == countBeforeCue + 1, "Ending a review must discard a pending shortcut cue.")
 
+        let chapterDraft = GuidedNarrationDraft(sessionID: UUID(), sceneID: "chapter-scene", revision: 1, narration: "Read the original wording.")
+        try await review.beginChapter([chapterDraft])
+        review.improveWording()
+        let wordingRequest = review.decision!
+        var chapterRevision = chapterDraft
+        chapterRevision.revision = 2
+        chapterRevision.narration = "Read the agent’s revised wording."
+        let approvalURL = root.appendingPathComponent("events/\(chapterDraft.sessionID.uuidString.lowercased())-r2.json")
+        @MainActor final class WordingSaveState {
+            var checked: [GuidedNarrationDraft] = []
+            var saved: [GuidedNarrationDraft] = []
+            var unavailable = true
+        }
+        let wordingSave = WordingSaveState()
+        review.prepareApprovedWordingSave = { draft in
+            wordingSave.checked.append(draft)
+            if wordingSave.unavailable { throw NSError(domain: "WordingSaveCheck", code: 1) }
+            return {
+                precondition(FileManager.default.fileExists(atPath: approvalURL.path))
+                wordingSave.saved.append(draft)
+            }
+        }
+        try await send(command("submit", chapterRevision, event: wordingRequest.id))
+        precondition(review.draft == chapterRevision && wordingSave.checked.isEmpty && wordingSave.saved.isEmpty)
+        review.unsavedEditorSceneID = chapterDraft.sceneID
+        review.approveWording()
+        precondition(review.decision == nil && wordingSave.checked.isEmpty, "Approval must preserve an unsaved local edit.")
+        review.unsavedEditorSceneID = nil
+        review.approveWording()
+        precondition(review.decision == nil && !FileManager.default.fileExists(atPath: approvalURL.path))
+        precondition(wordingSave.saved.isEmpty)
+        wordingSave.unavailable = false
+        review.approveWording()
+        review.approveWording()
+        precondition(review.decision?.draft == chapterRevision && wordingSave.saved == [chapterRevision])
+        try await send(command("end", chapterRevision))
+
         review.stop()
-        print("PASS: narration approval/improvement handshake, exact revision events, durable acknowledgments, shortcut ownership and spoken feedback, duplicate suppression, restart recovery, blocked/interrupted speech and stale completion guards; no real speech or recording")
+        print("PASS: narration approval/improvement handshake, chapter wording persistence, exact revision events, durable acknowledgments, shortcut ownership and spoken feedback, duplicate suppression, restart recovery and stale completion guards; no real speech or recording")
     }
 }

@@ -2368,12 +2368,16 @@ final class AppModel: ObservableObject {
     }
 
     private func saveEditedBaserowChapter(_ chapter: NarrationChapter, restartGuidedReview: Bool) throws {
+        try prepareBaserowChapterSave(chapter, restartGuidedReview: restartGuidedReview)?()
+    }
+
+    private func prepareBaserowChapterSave(_ chapter: NarrationChapter, restartGuidedReview: Bool) throws -> (() -> Void)? {
         guard isBaserowConnected, !isBaserowSyncing, let oldChapter = loadedChapter else {
             throw BaserowSceneError.invalidScenes("Connect Baserow and finish syncing before saving.")
         }
         guard let changed = chapter.scenes.first(where: { scene in
             oldChapter.scenes.first(where: { $0.id == scene.id }) != scene
-        }) else { return }
+        }) else { return nil }
         guard let rowID = baserowRowIDsBySceneID[changed.id],
               let old = oldChapter.scenes.first(where: { $0.id == changed.id }) else {
             throw BaserowSceneError.invalidScenes("The edited scene is no longer loaded.")
@@ -2384,29 +2388,44 @@ final class AppModel: ObservableObject {
         if reset, changed.narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || changed.narration.count > 12000 {
             throw BaserowSceneError.invalidScenes("Guided narration needs 1–12,000 characters. Edit the wording before saving.")
         }
+        let restartDraft = reset && restartGuidedReview ? currentDraft : nil
+        return { self.applyBaserowChapterSave(chapter, changed: changed, rowID: rowID, restartDraft: restartDraft) }
+    }
+
+    private func applyBaserowChapterSave(_ chapter: NarrationChapter, changed: NarrationScene, rowID: Int,
+                                        restartDraft currentDraft: GuidedNarrationDraft?) {
         loadedChapter = chapter
         refreshScriptScenes()
         saveBaserowCache(chapter)
-        if reset && restartGuidedReview, let currentDraft {
-            let requestID = UUID()
-            guidedNarrationReview.editorResetRequestID = requestID
-            Task { @MainActor in
-                defer {
-                    if self.guidedNarrationReview.editorResetRequestID == requestID {
-                        self.guidedNarrationReview.editorResetRequestID = nil
-                    }
-                }
-                guard self.guidedNarrationReview.editorResetRequestID == requestID, self.isReviewingBaserowChapter, self.guidedNarrationReview.draft == currentDraft,
-                      self.loadedChapter?.scenes.first(where: { $0.id == changed.id })?.narration == changed.narration else { return }
-                do {
-                    try await self.guidedNarrationReview.replaceCurrentSceneWording(changed.narration)
-                } catch { self.statusMessage = error.localizedDescription }
-            }
-        }
+        if let currentDraft { scheduleGuidedWordingReview(changed.narration, replacing: currentDraft) }
         // A queued edit belongs to the connection and row where it was made.
         let baseURL = baserowBaseURL, token = baserowToken, tableID = baserowTableID
         enqueueSceneSave(changed, rowID: rowID) { [baserowSceneService] in
             try await baserowSceneService.saveSceneContent(changed, rowID: rowID, baseURL: baseURL, token: token, tableID: tableID)
+        }
+    }
+
+    func reviewSavedWording(_ narration: String, sceneID: String) {
+        guard isReviewingBaserowChapter, let draft = guidedNarrationReview.draft,
+              draft.sceneID == sceneID, draft.narration != narration else { return }
+        scheduleGuidedWordingReview(narration, replacing: draft)
+    }
+
+    private func scheduleGuidedWordingReview(_ narration: String, replacing draft: GuidedNarrationDraft) {
+        let requestID = UUID()
+        guidedNarrationReview.editorResetRequestID = requestID
+        Task { @MainActor in
+            defer {
+                if self.guidedNarrationReview.editorResetRequestID == requestID {
+                    self.guidedNarrationReview.editorResetRequestID = nil
+                }
+            }
+            guard self.guidedNarrationReview.editorResetRequestID == requestID, self.isReviewingBaserowChapter,
+                  self.guidedNarrationReview.draft == draft,
+                  self.loadedChapter?.scenes.first(where: { $0.id == draft.sceneID })?.narration == narration else { return }
+            do {
+                try await self.guidedNarrationReview.replaceCurrentSceneWording(narration)
+            } catch { self.statusMessage = error.localizedDescription }
         }
     }
 
@@ -3457,6 +3476,19 @@ final class AppModel: ObservableObject {
         throw BaserowSceneError.invalidScenes("FocuSee did not confirm pause after playback.")
     }
 
+    private func chapterWithSceneWording(_ narration: String, sceneID: String) throws -> NarrationChapter {
+        guard let chapter = loadedChapter,
+              let index = chapter.scenes.firstIndex(where: { $0.id == sceneID }) else {
+            throw BaserowSceneError.invalidScenes("Load this scene in the Scene Manager before saving its wording.")
+        }
+        var scenes = chapter.scenes
+        let scene = scenes[index]
+        scenes[index] = NarrationScene(id: scene.id, sceneNumber: scene.sceneNumber, narration: narration,
+                                      onScreen: scene.onScreen, code: scene.code, annotation: scene.annotation)
+        return NarrationChapter(schemaVersion: chapter.schemaVersion, chapterNumber: chapter.chapterNumber,
+                                chapterTitle: chapter.chapterTitle, scenes: scenes)
+    }
+
     private func configureGuidedNarrationReview() {
         guidedNarrationReview.shortcutFeedbackAllowed = { [weak self] in
             guard let self, !self.isRecordingForShortcutFeedback else { return false }
@@ -3474,6 +3506,13 @@ final class AppModel: ObservableObject {
             guard let self, self.scriptInputFormat == .baserow else { return }
             self.requestSceneManagerSelection(sceneID: sceneID)
             self.presenterOverlayController?.updateLayout()
+        }
+        guidedNarrationReview.prepareApprovedWordingSave = { [weak self] draft in
+            guard let self, self.isReviewingBaserowChapter else {
+                throw BaserowSceneError.invalidScenes("Open the Baserow chapter before approving its wording.")
+            }
+            let chapter = try self.chapterWithSceneWording(draft.narration, sceneID: draft.sceneID)
+            return try self.prepareBaserowChapterSave(chapter, restartGuidedReview: false)
         }
         guidedNarrationReview.recordManualAudio = { [weak self] approval in
             guard let self else { throw CancellationError() }
@@ -3552,15 +3591,9 @@ final class AppModel: ObservableObject {
                 pieces: pieces, pause: pause, isCurrent: isCurrent)
         }
         guidedNarrationReview.saveSentenceWording = { [weak self] sceneID, narration in
-            guard let self, let chapter = self.loadedChapter, chapter.scenes.contains(where: { $0.id == sceneID }) else {
-                throw NSError(domain: "SentenceAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Load this scene in the scene editor before changing its wording."])
-            }
-            let scenes = chapter.scenes.map { scene in
-                scene.id == sceneID ? NarrationScene(id: scene.id, sceneNumber: scene.sceneNumber, narration: narration,
-                    onScreen: scene.onScreen, code: scene.code, annotation: scene.annotation) : scene
-            }
-            try self.saveEditedChapter(NarrationChapter(schemaVersion: chapter.schemaVersion, chapterNumber: chapter.chapterNumber,
-                chapterTitle: chapter.chapterTitle, scenes: scenes), restartGuidedReview: false)
+            guard let self else { throw CancellationError() }
+            let chapter = try self.chapterWithSceneWording(narration, sceneID: sceneID)
+            try self.saveEditedChapter(chapter, restartGuidedReview: false)
         }
         guidedNarrationReview.previewAudio = { [weak self] audio, isCurrent in
             guard let self else { throw CancellationError() }

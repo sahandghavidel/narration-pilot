@@ -102,6 +102,7 @@ final class GuidedNarrationReview: ObservableObject {
     var approvedSentence: (String, String) throws -> GuidedPreparedAudio? = { _, _ in nil }
     var assembleAudio: (@MainActor (String, String, [GuidedPreparedAudio], Double, @MainActor () -> Bool) async throws -> GuidedPreparedAudio)?
     var saveSentenceWording: ((String, String) throws -> Void)?
+    var prepareApprovedWordingSave: (GuidedNarrationDraft) throws -> (() -> Void)? = { _ in nil }
     private var sentenceStore: SentenceAudioStore { SentenceAudioStore(directory: directory.appendingPathComponent("sentences")) }
     var reviewingSentence: Bool { sentences.map { $0.pieces.indices.contains($0.selectedIndex) } ?? false }
     var currentSentence: SentenceAudioPiece? {
@@ -359,7 +360,17 @@ final class GuidedNarrationReview: ObservableObject {
             // One immutable event file per revision is authoritative across crashes.
             let url = revisingVoice ? voiceImprovementURL(draft) : eventURL(draft)
             guard !FileManager.default.fileExists(atPath: url.path) else { return }
+            let saveWording: (() -> Void)?
+            if kind == "approveNarration", remainingChapterScenes != nil {
+                guard unsavedEditorSceneID != draft.sceneID else {
+                    throw error("Save your edit or use the agent’s wording before approving.")
+                }
+                saveWording = try prepareApprovedWordingSave(draft)
+            } else {
+                saveWording = nil
+            }
             try write(event, to: url)
+            saveWording?()
             if revisingVoice {
                 deferredAudioChoice = nil
                 cancelAudio()
