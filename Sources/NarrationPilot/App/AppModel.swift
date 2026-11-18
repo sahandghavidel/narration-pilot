@@ -3351,6 +3351,7 @@ final class AppModel: ObservableObject {
             return false
         }
 
+        guidedNarrationReview.discardShortcutFeedback()
         if !shortcutTriggerService.trigger(shortcut) {
             statusMessage = "Could not trigger the recording shortcut."
             return false
@@ -3457,6 +3458,18 @@ final class AppModel: ObservableObject {
     }
 
     private func configureGuidedNarrationReview() {
+        guidedNarrationReview.shortcutFeedbackAllowed = { [weak self] in
+            guard let self, !self.isRecordingForShortcutFeedback else { return false }
+            let recorder = await self.clonedFocuSeeControl.sample()
+            return recorder.allowsSceneReview && !self.isRecordingForShortcutFeedback
+        }
+        approvedAudioRecording.$isBusy.removeDuplicates().filter { $0 }
+            .sink { [weak self] _ in self?.guidedNarrationReview.discardShortcutFeedback() }
+            .store(in: &cancellables)
+        guidedPractice.$phase.removeDuplicates().filter { Self.isGuidedRecordingPhase($0) }
+            .sink { [weak self] _ in self?.guidedNarrationReview.discardShortcutFeedback() }
+            .store(in: &cancellables)
+
         guidedNarrationReview.onChapterSceneSelected = { [weak self] sceneID in
             guard let self, self.scriptInputFormat == .baserow else { return }
             self.requestSceneManagerSelection(sceneID: sceneID)
@@ -4014,20 +4027,27 @@ final class AppModel: ObservableObject {
         mouseShortcutService?.start()
     }
 
-    private var enabledGuidedActions: Set<GuidedAction> = []
+    private static func isGuidedRecordingPhase(_ phase: String) -> Bool {
+        ["recordRequested", "recording", "waitingForRecordActions"].contains(phase)
+    }
+
+    private var isRecordingForShortcutFeedback: Bool {
+        approvedAudioRecording.isBusy || guidedNarrationReview.phase == "manualRecording"
+            || Self.isGuidedRecordingPhase(guidedPractice.phase)
+    }
 
     func refreshGuidedShortcuts(force: Bool = false) {
+        updateGuidedShortcutRegistration(reviewActive: guidedNarrationReview.active, force: force)
+    }
+
+    private func updateGuidedShortcutRegistration(reviewActive: Bool, force: Bool = false) {
         for action in GuidedAction.allCases {
-            let standalone = !guidedNarrationReview.active && [.approveWording, .regenerateVoice].contains(action)
-            let enabled = standalone || action.available(guidedNarrationReview, guidedPractice)
-            if force || enabled != enabledGuidedActions.contains(action) {
-                if enabled {
-                    KeyboardShortcuts.enable(action.shortcut)
-                    enabledGuidedActions.insert(action)
-                } else {
-                    KeyboardShortcuts.disable(action.shortcut)
-                    enabledGuidedActions.remove(action)
-                }
+            let shouldCapture = reviewActive || action.hasStandaloneShortcut
+            if force || !shouldCapture {
+                KeyboardShortcuts.disable(action.shortcut)
+            }
+            if shouldCapture {
+                KeyboardShortcuts.enable(action.shortcut)
             }
         }
     }
@@ -4044,7 +4064,18 @@ final class AppModel: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     if self.guidedNarrationReview.active {
-                        action.perform(self.guidedNarrationReview, self.guidedPractice)
+                        let review = self.guidedNarrationReview
+                        let practice = self.guidedPractice
+                        guard action.available(review, practice) else {
+                            guard !self.isRecordingForShortcutFeedback else { return }
+                            let reason = action.unavailableReason(review, practice)
+                            review.speakShortcutFeedback("Shortcut unavailable. \(reason)") { [weak self] in
+                                guard let self else { return false }
+                                return !self.guidedPractice.promptBusy && self.guidedPractice.phase != "practicing"
+                            }
+                            return
+                        }
+                        action.perform(review, practice)
                     } else {
                         switch action {
                         case .approveWording: self.clonedClipboardAudio.approvePreviewedClipboard()
@@ -4055,10 +4086,10 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        refreshGuidedShortcuts(force: true)
-        guidedNarrationReview.objectWillChange.merge(with: guidedPractice.objectWillChange)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] in self?.refreshGuidedShortcuts() }
+        guidedNarrationReview.$active.removeDuplicates()
+            .sink { [weak self] active in
+                self?.updateGuidedShortcutRegistration(reviewActive: active)
+            }
             .store(in: &cancellables)
         KeyboardShortcuts.onKeyUp(for: .generateClonedClipboardAudio) { [weak self] in
             Task { @MainActor in

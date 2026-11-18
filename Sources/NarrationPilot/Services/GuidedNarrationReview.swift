@@ -155,6 +155,9 @@ final class GuidedNarrationReview: ObservableObject {
     private var processing = false
     private var checkingSpeech = false
     private var speechToken: UUID?
+    private var shortcutFeedbackSpeechToken: UUID?
+    private var shortcutFeedbackTask: Task<Void, Never>?
+    var shortcutFeedbackAllowed: () async -> Bool = { true }
     private var speechWaiter: CheckedContinuation<Bool, Never>?
     private var audioTask: Task<Void, Never>?
     private var audioOperationID: UUID?
@@ -248,6 +251,9 @@ final class GuidedNarrationReview: ObservableObject {
     func speechFinished(_ token: UUID) {
         guard token == speechToken else { return }
         speechToken = nil
+        if token == shortcutFeedbackSpeechToken {
+            shortcutFeedbackSpeechToken = nil; publish(); return
+        }
         let waiter = speechWaiter; speechWaiter = nil; waiter?.resume(returning: true)
         if active, phase == "reading" {
             phase = "awaitingDecision"
@@ -259,6 +265,9 @@ final class GuidedNarrationReview: ObservableObject {
     func speechFailed(_ token: UUID) {
         guard token == speechToken else { return }
         speechToken = nil
+        if token == shortcutFeedbackSpeechToken {
+            shortcutFeedbackSpeechToken = nil; publish(); return
+        }
         let waiter = speechWaiter; speechWaiter = nil; waiter?.resume(returning: false)
         if active, decision == nil { phase = "blocked" }
         message = "Spoken prompt failed. The draft and any saved decision are retained; use Replay Narration when ready."
@@ -267,6 +276,7 @@ final class GuidedNarrationReview: ObservableObject {
 
     private func stopOwnedSpeech() {
         speechToken = nil
+        shortcutFeedbackSpeechToken = nil
         let waiter = speechWaiter; speechWaiter = nil; waiter?.resume(returning: false)
         stopSpeech()
     }
@@ -382,6 +392,7 @@ final class GuidedNarrationReview: ObservableObject {
         guard expected == generation, active, decision == nil else { return }
         checkingSpeech = false
         if let issue { phase = "blocked"; message = issue; publish(); return }
+        stopShortcutFeedbackSpeech()
         let token = UUID(); speechToken = token
         phase = "reading"; message = "Reading narration. Approval accepts these exact words; redo requests an improved draft."
         publish()
@@ -392,7 +403,48 @@ final class GuidedNarrationReview: ObservableObject {
     private func announce(_ text: String, expectedGeneration: UUID) async {
         guard expectedGeneration == generation, active else { return }
         guard await canSpeak() == nil, expectedGeneration == generation, active else { return }
+        stopShortcutFeedbackSpeech()
         let token = UUID(); speechToken = token; publish(); speak(text, token)
+    }
+
+    func speakShortcutFeedback(_ text: String, whenReady: @escaping @MainActor () -> Bool) {
+        guard active, shortcutFeedbackTask == nil, shortcutFeedbackSpeechToken == nil else { return }
+        let expected = generation
+        shortcutFeedbackTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.shortcutFeedbackTask = nil }
+            @MainActor func isCurrent() -> Bool { self.active && self.generation == expected && !Task.isCancelled }
+            @MainActor func isReady() -> Bool {
+                self.speechToken == nil && !self.checkingSpeech && !self.audioBusy && self.manualTask == nil && whenReady()
+            }
+            guard isCurrent(), await self.shortcutFeedbackAllowed() else { return }
+            while isCurrent() {
+                if isReady(), await self.canSpeak() == nil, isCurrent(), isReady() {
+                    guard await self.shortcutFeedbackAllowed() else { return }
+                    if isCurrent(), isReady() {
+                        let token = UUID()
+                        self.speechToken = token
+                        self.shortcutFeedbackSpeechToken = token
+                        self.publish()
+                        self.speak(text, token)
+                        return
+                    }
+                }
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+            }
+        }
+    }
+
+    private func stopShortcutFeedbackSpeech() {
+        if shortcutFeedbackSpeechToken != nil { stopOwnedSpeech() }
+    }
+
+    func discardShortcutFeedback() {
+        shortcutFeedbackTask?.cancel()
+        if shortcutFeedbackSpeechToken != nil {
+            stopShortcutFeedbackSpeech()
+            publish()
+        }
     }
 
     /// Practice uses the same isolated spoken-status route, after any audio
@@ -669,6 +721,7 @@ final class GuidedNarrationReview: ObservableObject {
     private func sayAndWait(_ text: String, cueTimeout: Duration? = nil, isCurrent: @escaping @MainActor () -> Bool) async throws {
         if let issue = await canSpeak() { throw error(issue) }
         guard isCurrent() else { throw CancellationError() }
+        stopShortcutFeedbackSpeech()
         let token = UUID()
         let watchdog = cueTimeout.map { timeout in
             Task { @MainActor [weak self] in
@@ -776,6 +829,7 @@ final class GuidedNarrationReview: ObservableObject {
 
     private func startManualTake(_ approval: GuidedAudioDecision) {
         guard let recordManualAudio else { return }
+        discardShortcutFeedback()
         phase = "manualRecording"; message = "Recording your screen actions with the approved voice."
         publish()
         manualTask = Task {

@@ -125,7 +125,58 @@ struct GuidedNarrationReviewCheck {
         precondition(!review.active && spoken.count == count)
         var invalid = late; invalid.sessionID = UUID(); invalid.narration = "  "
         try await send(command("submit", invalid), accepted: false)
+
+        review.canSpeak = { nil }
+        let shortcut = GuidedNarrationDraft(sessionID: UUID(), sceneID: "shortcut", revision: 1, narration: "Review this wording.")
+        try await send(command("submit", shortcut))
+        let cue = "Shortcut unavailable. Start agent practice first."
+        let narrationToken = spoken.last!.1
+        let countBeforeCue = spoken.count
+        @MainActor final class PlaybackState {
+            var isIdle = false
+            var isRecording = false
+        }
+        let playback = PlaybackState()
+        review.shortcutFeedbackAllowed = { !playback.isRecording }
+        review.speakShortcutFeedback(cue) { playback.isIdle }
+        review.speakShortcutFeedback(cue) { playback.isIdle }
+        await Task.yield()
+        precondition(spoken.count == countBeforeCue, "The shortcut cue must wait for ongoing narration.")
+        review.speechFinished(narrationToken)
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(spoken.count == countBeforeCue, "The shortcut cue must also wait for external playback.")
+        playback.isIdle = true
+        for _ in 0..<30 {
+            if spoken.count > countBeforeCue { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        precondition(spoken.count == countBeforeCue + 1 && spoken.last?.0 == cue)
+        review.speechFailed(spoken.last!.1)
+        precondition(review.phase == "awaitingDecision" && review.decision == nil, "A failed cue must leave wording review available.")
+
+        playback.isRecording = true
+        review.speakShortcutFeedback(cue) { playback.isIdle }
+        try await Task.sleep(for: .milliseconds(200))
+        playback.isRecording = false
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(spoken.count == countBeforeCue + 1, "Shortcuts pressed while recording must stay silent after the take.")
+
+        playback.isIdle = false
+        review.speakShortcutFeedback(cue) { playback.isIdle }
+        await Task.yield()
+        review.discardShortcutFeedback()
+        playback.isIdle = true
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(spoken.count == countBeforeCue + 1, "Starting a take must clear queued shortcut feedback.")
+
+        playback.isIdle = false
+        review.speakShortcutFeedback(cue) { playback.isIdle }
+        try await send(command("end", shortcut))
+        playback.isIdle = true
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(spoken.count == countBeforeCue + 1, "Ending a review must discard a pending shortcut cue.")
+
         review.stop()
-        print("PASS: narration approval/improvement handshake, exact revision events, durable acknowledgments, shortcut ownership, duplicate suppression, restart recovery, blocked/interrupted speech and stale completion guards; no real speech or recording")
+        print("PASS: narration approval/improvement handshake, exact revision events, durable acknowledgments, shortcut ownership and spoken feedback, duplicate suppression, restart recovery, blocked/interrupted speech and stale completion guards; no real speech or recording")
     }
 }

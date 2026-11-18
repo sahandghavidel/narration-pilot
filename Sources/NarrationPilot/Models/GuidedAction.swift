@@ -14,6 +14,10 @@ enum GuidedAction: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
+    var hasStandaloneShortcut: Bool {
+        self == .approveWording || self == .regenerateVoice
+    }
+
     var shortcut: KeyboardShortcuts.Name {
         switch self {
         case .replayNarration: .guidedReplayNarration
@@ -50,6 +54,40 @@ enum GuidedAction: String, CaseIterable, Identifiable {
         case .startPractice: return review.phase == "audioReady" && !review.audioBusy || review.phase == "audioApproved" && review.audioDecision != nil
         case .manual: return ["audioReady", "manualRetry"].contains(review.phase) && !review.audioBusy
         default: return false
+        }
+    }
+
+    @MainActor func unavailableReason(_ review: GuidedNarrationReview, _ practice: GuidedPracticeSession) -> String {
+        guard let draft = review.draft else { return "Open a scene in Guided Review first." }
+        if review.unsavedEditorSceneID == draft.sceneID || review.editorResetRequestID != nil {
+            return "Finish saving or discard your scene edits first."
+        }
+        if practice.active {
+            switch self {
+            case .agentRecord, .replayPractice, .manual:
+                return "Wait until the rehearsal is ready."
+            case .improvePractice:
+                return "Improve practice is available after the rehearsal finishes or is interrupted."
+            default:
+                return "This action is unavailable during agent practice."
+            }
+        }
+        if review.audioBusy {
+            return "Wait for the current audio step to finish."
+        }
+        switch self {
+        case .agentRecord, .replayPractice, .improvePractice:
+            return "Start agent practice first."
+        case .startPractice, .manual:
+            return "Finish reviewing the scene’s voice preview first."
+        case .replayVoice:
+            return review.decision?.kind == "approveNarration"
+                ? "A generated voice preview must be ready to replay."
+                : "Approve the narration wording first."
+        case .regenerateVoice where review.decision?.kind != "approveNarration":
+            return "Approve the narration wording first."
+        default:
+            return "This action is unavailable at the current review step."
         }
     }
 

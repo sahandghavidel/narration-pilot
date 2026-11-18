@@ -344,9 +344,13 @@ practice approval or announcing a completed recorded scene. Fast mode's pause
 command remains unverified by the recorder controller; action reports and the
 saved footage still require the agent/user's normal review.
 
-I requests an improved practice with the approved audio. Stage-specific shortcuts
-are enabled when their actions become available. Practice-ready decisions
-can interrupt the spoken ready cue. Recording requires that actual practice
+I requests an improved practice with the approved audio. During an active
+Guided Review, Narration Pilot captures the assigned guided shortcuts. If an
+action is unavailable at the current step, Narration Pilot speaks a brief
+explanation and the app in focus does not receive the shortcut. The cue waits
+until audio is idle. During a take, unavailable shortcuts are blocked silently
+and any pending cue is cleared. Practice-ready
+decisions can interrupt the spoken ready cue. Recording requires that actual practice
 approval, the frozen plan, a fresh restoration gate, and valid recording
 Resume/Pause settings or Fast mode. An interrupted/restarted session requires a
 fresh practice, never automatic playback or recording. Other audio preparation
