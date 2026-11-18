@@ -2025,16 +2025,7 @@ final class AppModel: ObservableObject {
             }
             let selectedScriptID = baserowSelectedScriptID
             if selectedScriptID != 0 {
-                let scriptRecords = allRecords
-                    .filter { $0.scriptIDs.contains(selectedScriptID) }
-                    .sorted { $0.originalSceneNumber < $1.originalSceneNumber }
-                let firstNumber = scriptRecords.first?.originalSceneNumber == 0 ? 0 : 1
-                for (index, record) in scriptRecords.enumerated()
-                where record.originalSceneNumber != index + firstNumber {
-                    throw BaserowSceneError.invalidScenes(
-                        "Script scenes must use continuous Scene Numbers. Expected \(index + firstNumber), found \(record.originalSceneNumber)."
-                    )
-                }
+                try BaserowSceneService.validateSceneNumbers(allRecords, scriptID: selectedScriptID)
             }
             let availableParts = allRecords
                 .filter { selectedScriptID == 0 || $0.scriptIDs.contains(selectedScriptID) }
@@ -3445,13 +3436,11 @@ final class AppModel: ObservableObject {
         await sceneSaveTask?.value
         let sceneID = "baserow-row-\(selection.startRow)"
         if let failure = failedSceneSaves[sceneID] { throw BaserowSceneError.invalidScenes("Retry the scene save first. \(failure)") }
-        let rows = try await baserowSceneService.fetchScenes(baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID)
-            .filter { $0.scriptIDs.contains(selection.script) && $0.part == selection.part }
+        let records = try await baserowSceneService.fetchScenes(baseURL: baserowBaseURL, token: baserowToken, tableID: baserowTableID)
+        try BaserowSceneService.validateSceneNumbers(records, scriptID: selection.script)
+        let rows = records.filter { $0.scriptIDs.contains(selection.script) && $0.part == selection.part }
         guard let index = rows.firstIndex(where: { $0.rowID == selection.startRow }) else {
             throw BaserowSceneError.invalidScenes("The selected Baserow scene changed. Reload the scene list.")
-        }
-        guard Set(rows.map(\.originalSceneNumber)).count == rows.count else {
-            throw BaserowSceneError.invalidScenes("This chapter contains duplicate scene numbers. Check the order in Baserow.")
         }
         guard await clonedFocuSeeControl.sample() == .paused else {
             throw BaserowSceneError.invalidScenes("Pause the active FocuSee recording before starting the chapter.")

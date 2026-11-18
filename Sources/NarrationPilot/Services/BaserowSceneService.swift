@@ -40,6 +40,17 @@ enum BaserowSceneError: LocalizedError {
 
 @MainActor
 final class BaserowSceneService {
+    static func validateSceneNumbers(_ records: [BaserowSceneRecord], scriptID: Int) throws {
+        var sceneNumbers: Set<Int> = []
+        for record in records where record.scriptIDs.contains(scriptID) {
+            guard sceneNumbers.insert(record.originalSceneNumber).inserted else {
+                throw BaserowSceneError.invalidScenes(
+                    "This script has more than one scene numbered \(record.originalSceneNumber). Check the order in Baserow."
+                )
+            }
+        }
+    }
+
     func fetchScripts(baseURL: String, token: String, tableID: String) async throws -> [BaserowScriptRecord] {
         var records: [BaserowScriptRecord] = []
         var page = 1

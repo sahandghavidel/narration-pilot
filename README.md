@@ -403,6 +403,8 @@ commands, and the hands-free flow. The existing
 
 Select a Baserow scene in the JSON Scene Manager. The reader and **Guided Narration & Audio Review** share that selection. Pause FocuSee and click **Start Chapter Review** to review from the selected row through the end of its chapter. The JSON Scene Manager also offers **Start review from this scene** beneath the narration. During review, edit the line and choose **Save & hear changes**, then approve or replay it in the same panel. Selecting another row during review starts wording review from that row. A selection made during a take takes effect when the take finishes.
 
+Baserow scenes load in Scene Number order. Scene numbers can have gaps, and each scene number must be unique within its script.
+
 An agent revision appears immediately in **Narration**. **Approve wording** saves that revision to the Baserow scene. If you have an unsaved narration edit, you can save your edit or choose **Use Agent Wording** before approving. If the Baserow write fails, the Scene Manager offers **Retry Baserow Save**.
 
 The arrows beside **Improve wording** and **Improve practice** in the Scene Manager offer presets and a custom instruction field. Choose **Manage options…** to add, edit, reorder, or delete local presets. Each preset has a button label and an agent instruction. **Save as preset…** keeps a custom instruction for future use. Each submitted instruction applies to one request. The main buttons and shortcuts send the usual general improvement request.

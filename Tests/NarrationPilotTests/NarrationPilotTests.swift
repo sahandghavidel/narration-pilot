@@ -63,6 +63,28 @@ final class NarrationPilotTests: XCTestCase {
         XCTAssertNotNil(BaserowSceneService.date(from: "2026-09-11T06:40:43Z"))
     }
 
+    @MainActor func testBaserowSceneNumbersAllowGapsAndRejectDuplicatesWithinTheScript() throws {
+        func record(_ rowID: Int, number: Int, script: Int, part: String) -> BaserowSceneRecord {
+            BaserowSceneRecord(
+                rowID: rowID, originalSceneNumber: number, part: part, scriptIDs: [script], lastEditedTime: "",
+                scene: NarrationScene(id: "baserow-row-\(rowID)", sceneNumber: number, narration: "Scene.", onScreen: "", code: nil)
+            )
+        }
+
+        let scenes = [
+            record(1, number: 0, script: 20, part: "Introduction"),
+            record(2, number: 13, script: 20, part: "Chapter 2"),
+            record(3, number: 65, script: 20, part: "Conclusion"),
+            record(4, number: 13, script: 21, part: "Chapter 2")
+        ]
+        XCTAssertNoThrow(try BaserowSceneService.validateSceneNumbers(scenes, scriptID: 20))
+        XCTAssertNoThrow(try BaserowSceneService.validateSceneNumbers(Array(scenes.dropFirst()), scriptID: 20))
+        let duplicate = record(5, number: 13, script: 20, part: "Conclusion")
+        XCTAssertThrowsError(try BaserowSceneService.validateSceneNumbers(scenes + [duplicate], scriptID: 20)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("more than one scene numbered 13"))
+        }
+    }
+
     func testOnScreenLinkExtractorFindsHTTPAndHTTPSLinksInOrder() {
         let urls = OnScreenLinkExtractor.urls(
             in: "Open https://github.com/Leonxlnx/unlazy and http://example.com/docs."
